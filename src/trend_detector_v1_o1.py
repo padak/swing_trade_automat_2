@@ -11,6 +11,8 @@ from scipy import stats
 import statistics
 
 trade_history = []  # We'll store info about each trade in-memory
+total_trump_cost = 500.0  # Track cost basis of TRUMP holdings
+realized_profit = 0.0
 
 def record_trade(action, price, threshold_used, profit):
     """
@@ -158,7 +160,9 @@ def main():
 
                             # (Optional) calculate approximate realized profit here.
                             # For a real approach, track cost basis of TRUMP:
-                            realized_profit = net_usdc - 500.0  # naive example subtracting the original purchase cost
+                            current_cost_basis = total_trump_cost * (gross_usdc / trump_balance)
+                            realized_profit = (current_price * gross_usdc) - current_cost_basis
+                            total_trump_cost -= current_cost_basis
                             usdc_balance += net_usdc
                             trump_balance = 0.0
                             last_entry_price = current_price

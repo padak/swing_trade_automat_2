@@ -10,6 +10,7 @@ import pandas as pd
 from scipy import stats
 import pandas_ta as ta
 import numpy as np
+from sklearn.linear_model import SGDRegressor
 
 def main():
     parser = argparse.ArgumentParser(description="Trend Detector v1 - single transaction, with swing threshold.")
@@ -59,6 +60,9 @@ def main():
 
     print("Strategy: Single Transaction per Down/Up with a 1% swing threshold.")
     print("Press Ctrl+C to stop.\n")
+
+    # Add to main initialization
+    trading_model = TradingModel()
 
     try:
         while True:
@@ -285,6 +289,56 @@ class SmartTrendDetector:
 # data = pd.read_csv('price_data.csv')
 # detector = SmartTrendDetector(data)
 # print(detector.analyze())
+
+class TradingModel:
+    def __init__(self):
+        self.model = SGDRegressor()
+        self.last_state = None
+        self.last_action = None
+        
+    def predict_threshold(self, market_state):
+        """Predict optimal threshold using learned model"""
+        if not hasattr(self.model, "coef_"):
+            # Initial random exploration
+            return max(0.1, min(np.random.normal(1.0, 0.5), 3.0))
+        return max(0.1, self.model.predict([market_state])[0])
+
+    def update_model(self, reward, new_state):
+        """Reinforcement learning update"""
+        if self.last_state is not None:
+            self.model.partial_fit([self.last_state], [reward])
+        self.last_state = new_state
+
+def get_market_state(client, symbol):
+    """Create normalized market state vector"""
+    klines = client.get_klines(symbol=symbol, interval="1h", limit=24)
+    prices = np.array([float(k[4]) for k in klines])
+    return np.array([
+        prices.mean(),          # 24h average
+        prices.std(),           # Volatility
+        prices[-1]/prices[0],   # 24h return
+        (prices[-1] - min(prices))/(max(prices) - min(prices))  # Relative position
+    ])
+
+def user_friendly_alert(action, reason):
+    """Generate plain language alerts"""
+    messages = {
+        "BUY": f"📈 Buying opportunity detected! {reason}",
+        "SELL": f"📉 Selling recommended! {reason}",
+        "HOLD": "🛑 No clear trend - maintaining position"
+    }
+    print(f"\n⚠️ ALERT: {messages[action]}\n")
+
+def execute_trade(client, action, amount):
+    """Execute trade with plain language confirmation"""
+    if action == "BUY":
+        print(f"🟢 Purchasing {amount:.2f} USDC worth of assets")
+        # client.order_market_buy(...)
+    elif action == "SELL":
+        print(f"🔴 Liquidating {amount:.2f} USDC equivalent position")
+        # client.order_market_sell(...)
+    else:
+        print("🟡 No action taken - maintaining current position")
 
 if __name__ == "__main__":
     main()
