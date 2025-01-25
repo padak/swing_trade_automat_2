@@ -20,7 +20,7 @@ The Trend Detector v1 Gemini system uses a combination of technical indicators a
 This section describes the logical flow of the `trend_detector_v1_gemini.py` script to help understand its inner workings.
 
 ```mermaid
-graph LR
+graph TB
     subgraph Initialization
         A[Start] --> B[Load API Keys & Secrets]
         B --> C[Set Initial Parameters]
