@@ -1,0 +1,6 @@
+# Official Python client for Binance
+python-binance>=1.0.19
+
+# You may add other dependencies here as your project grows:
+# e.g., requests, python-dotenv for loading .env files, etc.
+python-dotenv>=1.0.0 
