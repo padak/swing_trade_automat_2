@@ -271,19 +271,23 @@ When the script starts, it performs the following data fetching operations:
 
 ### 2. Iteration Data Fetching (Trading Loop)
 
-Inside the main trading loop (`while trading_enabled:`), in each iteration, the script fetches:
+Inside the main trading loop (`while trading_enabled:`), in each iteration, the script fetches **only the following**:
 
 *   **Current Price for Trading Decisions:**
-    *   In each iteration, `fetch_current_price(SYMBOL)` is called again to get the most up-to-date price of `TRUMPUSDC`.
+    *   In each iteration, `fetch_current_price(SYMBOL)` is called to get the most up-to-date price of `TRUMPUSDC`.
     *   **Example:** If in iteration 1, the current price is $55.25, and in iteration 2 (after a short delay), the price becomes $55.30, the script will fetch and use these updated prices in each iteration.
+    *   **Important:**  The script does *not* fetch historical kline data or order book information in each iteration.
 
 ### 3. Data Processing in Trading Loop Iterations
 
-With the current price fetched in each iteration, the script performs the following processing steps:
+With the current price fetched in each iteration, and using the accumulated `prices_history`, the script performs the following processing steps **internally**:
 
-1.  **Append to Price History:** The `current_price` is appended to the `prices_history` list, maintaining a history of recent prices.
+1.  **Append to Price History:** The `current_price` is appended to the `prices_history` list, maintaining a history of recent prices. This list is used for internal calculations of technical indicators.
 2.  **Generate Trading Signals:**
-    *   **Rule-Based Signal:**  `generate_trading_signal()` function uses the `prices_history` along with the current strategy parameters (`FAST_MA_PERIOD`, `SLOW_MA_PERIOD`, `RSI_PERIOD`, `RSI_OVERBOUGHT`, `RSI_OVERSOLD`) to calculate Moving Averages and RSI based on the historical prices and generate a "BUY", "SELL", or "NEUTRAL" signal.
+    *   **Rule-Based Signal:**  `generate_trading_signal()` function uses the *internally maintained* `prices_history` list, along with the current strategy parameters, to calculate:
+        *   **Moving Averages (MA):** Fast MA and Slow MA are calculated using the last `FAST_MA_PERIOD` and `SLOW_MA_PERIOD` prices from the `prices_history`, respectively.  *No new historical data is fetched from Binance for this calculation in each iteration.*
+        *   **Relative Strength Index (RSI):** RSI is calculated using the price changes within the `RSI_PERIOD` in the *`prices_history`*.  *Again, no new data is fetched from Binance for this RSI calculation in each iteration.*
+        *   Based on these internally calculated MAs and RSI, a "BUY", "SELL", or "NEUTRAL" signal is generated.
     *   **ML Model Signal (If Model is Trained):** If the ML model was successfully trained during initialization, `predict_signal(model, current_features)` is used. This function takes the latest calculated features (MA, RSI, Price Change based on recent `prices_history`) and uses the trained ML model to predict a trading signal ("BUY", "SELL", or "NEUTRAL").
     *   **Signal Combination:** The script combines the rule-based and ML signals (if available) to determine the final trading `signal`. In the current logic, if the ML signal is not "NEUTRAL", it prioritizes the ML signal; otherwise, it uses the rule-based signal.
 3.  **Execute Trade (Simulated):**
@@ -295,5 +299,14 @@ With the current price fetched in each iteration, the script performs the follow
     *   `evaluate_performance(initial_portfolio_value, current_portfolio_value)` calculates the current portfolio value and the profit/loss percentage since the beginning.
 6.  **Adjust Strategy Parameters (Periodically):**
     *   Every 10 iterations, `adjust_strategy_parameters(avg_performance)` is called. This function looks at the average performance over the last 10 iterations and adjusts the trading strategy parameters (`FAST_MA_PERIOD`, `SLOW_MA_PERIOD`, `RSI_OVERBOUGHT`, `RSI_OVERSOLD`, `STOP_LOSS_PERCENT`) to try and improve future performance.
+
+**Data Not Fetched in Each Iteration:**
+
+*   **Historical Kline Data:**  The script does *not* re-fetch historical candlestick data from Binance in each iteration after the initial optional fetch for ML training.
+*   **Order Book Data:**  Order book depth or order book snapshots are not fetched.
+*   **Volume Data:**  Real-time volume data (beyond what might be implicitly reflected in price changes) is not explicitly fetched in each iteration.
+*   **Other Market Data:**  Any other real-time market data beyond the current price is not used in the current script's iteration logic.
+
+By fetching only the current price and performing technical indicator calculations internally using the accumulated price history, the script maintains efficiency while implementing a trend-following strategy.
 
 By fetching the current price in each iteration and using the historical price data and technical indicators, the script continuously monitors the market, makes trading decisions, and adapts its strategy over time. 
