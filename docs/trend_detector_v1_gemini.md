@@ -21,23 +21,90 @@ This section describes the logical flow of the `trend_detector_v1_gemini.py` scr
 
 ```mermaid
 graph LR
-A[Start Script] --> B(Load Configuration);
-B --> C{Check Data Source};
-C -- CSV File --> D(Read CSV Data);
-C -- InfluxDB --> E(Query InfluxDB);
-D --> F(Data Preprocessing);
-E --> F;
-F --> G{Select Trend Detection Method};
-G -- Simple Moving Average --> H(Apply SMA);
-G -- Linear Regression --> I(Apply Linear Regression);
-H --> J(Analyze Trend Results);
-I --> J;
-J --> K{Output Trend Report};
-K --> L{Display/Save Report};
-L --> M[End Script];
-style C fill:#f9f,stroke:#333,stroke-width:2px
-style G fill:#ccf,stroke:#333,stroke-width:2px
-style J fill:#ffc,stroke:#333,stroke-width:2px
+    subgraph Initialization
+        A[Start] --> B{Load API Keys & Secrets};
+        B --> C{Set Initial Parameters};
+        C --> D{Initialize Binance Client};
+        D -- Success --> E{Calculate Initial TRUMP Quantity};
+        D -- Failure --> Fail[Initialization Failed - Exit];
+        E -- Price Fetched --> F{Fetch Initial Historical Data (for ML)};
+        E -- No Price --> Fail2[Could Not Fetch Initial Price - Exit];
+        F -- Data Fetched --> G{Initial Balances Set};
+        F -- No Data --> Warn[Warning: No Historical Data for ML];
+        G --> H(Initial Strategy Parameters Set);
+        H --> ML_Start[Start ML Model Training (Optional)];
+    end
+
+    subgraph ML_Model_Training
+        ML_Start --> ML_Fetch[Fetch Historical Data for Training];
+        ML_Fetch -- Data Fetched --> ML_Features{Calculate Features (MA, RSI, Price Change)};
+        ML_Fetch -- No Data --> ML_NoData[ML Training Skipped];
+        ML_Features --> ML_Split{Split Data (Train/Test)};
+        ML_Split --> ML_Train{Train Logistic Regression Model};
+        ML_Train -- Success --> ML_Eval{Evaluate Model Accuracy};
+        ML_Train -- Failure --> ML_Fail[ML Training Failed - Continue without ML];
+        ML_Eval --> ML_End[ML Model Trained & Evaluated];
+        ML_Fail --> ML_End;
+        ML_NoData --> ML_End;
+    end
+
+    subgraph Trading_Loop
+        ML_End --> Trading_Start[Start Trading Loop];
+        Trading_Start --> Iteration_Start[Iteration Start];
+        Iteration_Start --> FetchPrice{Fetch Current Price};
+        FetchPrice -- Price Fetched --> PriceHistory{Append Price to History};
+        FetchPrice -- No Price --> WaitRetry[Wait & Retry];
+        WaitRetry --> Iteration_Start;
+        PriceHistory --> DataCheck{Enough Data for Indicators? (MA, RSI)};
+        DataCheck -- Yes --> SignalGen_Start[Signal Generation];
+        DataCheck -- No --> PerfEval_NoSignal[Performance Evaluation (No Signal)];
+
+        subgraph Signal_Generation
+            SignalGen_Start --> RuleBasedSig{Generate Rule-Based Signal (MA & RSI)};
+            RuleBasedSig --> ML_Model_Check{Is ML Model Trained?};
+            ML_Model_Check -- Yes --> ML_SignalGen{Generate ML Signal};
+            ML_Model_Check -- No --> CombineSignals[Use Rule-Based Signal];
+            ML_SignalGen --> CombineSignals{Combine Signals (Prioritize ML if not NEUTRAL)};
+            CombineSignals --> TradeDecision{Trading Signal Decision (BUY/SELL/NEUTRAL)};
+        end
+
+        TradeDecision -- BUY/SELL --> ExecuteTrade{Execute Trade (Simulated)};
+        TradeDecision -- NEUTRAL --> PerfEval_NoSignal;
+
+        subgraph Trade_Execution
+            ExecuteTrade --> MinTradeCheck{Check Minimum Trade Quantity};
+            MinTradeCheck -- Met --> TradeExecutionLogic{Trade Execution Logic};
+            MinTradeCheck -- Not Met --> NoTrade[No Trade - Below Minimum];
+            TradeExecutionLogic -- BUY --> BuyOrder{Simulate BUY Order};
+            TradeExecutionLogic -- SELL --> SellOrder{Simulate SELL Order};
+            BuyOrder --> BalanceUpdate{Update Balances (USDC & TRUMP)};
+            SellOrder --> BalanceUpdate;
+            NoTrade --> BalanceUpdate;
+            BalanceUpdate --> PerfEval_Signal;
+        end
+
+        PerfEval_Signal[Performance Evaluation (After Signal)] --> PortfolioEval;
+        PerfEval_NoSignal --> PortfolioEval; # From NEUTRAL signal or not enough data
+
+        PortfolioEval{Evaluate Portfolio Value & P/L};
+        PortfolioEval --> StorePerformance{Store Performance History};
+        StorePerformance --> ParameterAdjCheck{Check for Parameter Adjustment Interval};
+        ParameterAdjCheck -- Yes --> ParameterAdjust{Adjust Strategy Parameters (Self-Learning)};
+        ParameterAdjCheck -- No --> LoopEnd[Loop End - Wait];
+        ParameterAdjust --> LoopEnd;
+        LoopEnd --> WaitTime[Wait Time (e.g., 10 seconds)];
+        WaitTime --> CheckTradingEnabled{Check if Trading Enabled (CTRL+C)};
+        CheckTradingEnabled -- Yes --> Iteration_Start;
+        CheckTradingEnabled -- No --> Trading_End[Trading Loop End - Graceful Exit];
+    end
+
+    Trading_End --> Cleanup[Cleanup (Optional)];
+    Cleanup --> Z[End];
+    Fail --> Z;
+    Fail2 --> Z;
+    Warn --> Trading_Start;
+    ML_NoData --> Trading_Start;
+    ML_Fail --> Trading_Start;
 ```
 
 The flowchart above illustrates the following steps:
