@@ -2,12 +2,13 @@ import os
 import time
 import math
 import argparse
+from datetime import datetime
 from dotenv import load_dotenv
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
 
 def main():
-    parser = argparse.ArgumentParser(description="Trend Detector v1 - virtual trading only, with more aggressive partial orders.")
+    parser = argparse.ArgumentParser(description="Trend Detector v1 - single transaction, with swing threshold.")
     parser.add_argument("--symbol", default="TRUMPUSDC", help="Symbol to trade (default: TRUMPUSDC)")
     args = parser.parse_args()
 
@@ -45,9 +46,12 @@ def main():
     # Poll interval
     poll_interval_sec = 1
 
-    print("Strategy: 1) shortTermMA=MA7, longTermMA=MA25, updated every second from 25 1m klines.")
-    print("          2) If MA7 < MA25 => SELL partial TRUMP (20%). If MA7 > MA25 => BUY partial USDC (20%).")
-    print("          3) 0.1% fee applies to each trade. Realized profit accumulates in total_profit_usdc.")
+    # Introduce a swing threshold. E.g. 1% difference from our last entry price
+    swing_threshold = 0.01  # 1% swing required before next trade
+    last_entry_price = startup_price  # track price where we last bought/sold
+    last_action = None  # 'BUY' or 'SELL'; helps avoid multiple trades in same direction
+
+    print("Strategy: Single Transaction per Down/Up with a 1% swing threshold.")
     print("Press Ctrl+C to stop.\n")
 
     try:
@@ -64,7 +68,7 @@ def main():
                 long_ma  = sum(close_prices) / 25.0      # MA25
                 current_price = close_prices[-1]
 
-                # Determine simple "trend" by comparing shortMA and longMA
+                # Determine trend
                 if short_ma > long_ma:
                     trend = "UP"
                 elif short_ma < long_ma:
@@ -72,22 +76,32 @@ def main():
                 else:
                     trend = "FLAT"
 
+                # Time label for logs
+                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(
-                    f"MA7={short_ma:.5f} / MA25={long_ma:.5f} => Trend={trend}, "
-                    f"Price={current_price:.5f}"
+                    f"[{now_str}] MA7={short_ma:.5f} / MA25={long_ma:.5f} => Trend={trend}, Price={current_price:.5f}"
                 )
 
-                # Aggressive partial trading logic
-                # (A) If trend = UP => BUY
-                if trend == "UP":
-                    # Attempt to buy some portion of USDC
-                    # e.g. 20% of current USDC, up to a max of 100 USDC
-                    if usdc_balance > 1.0:
-                        used_usdc = min(usdc_balance * 0.20, 100.0)
-                        # Enforce minimum trade value of 1.2 USDC
+                # Check if price moved enough from our last entry
+                price_change_ratio = abs(current_price - last_entry_price) / last_entry_price
+                if price_change_ratio < swing_threshold:
+                    # Not enough swing to justify a new trade
+                    total_trump_value = trump_balance * current_price
+                    total_equity = usdc_balance + total_trump_value
+                    print(
+                        f"[{now_str}] Swing < {swing_threshold*100:.1f}% threshold, no trade. "
+                        f"usdc={usdc_balance:.2f}, trump={trump_balance:.6f} (~{total_trump_value:.2f} USDC), "
+                        f"realizedProfit={total_profit_usdc:.2f}, totalEquity={total_equity:.2f}\n"
+                    )
+                    time.sleep(poll_interval_sec)
+                    continue
+
+                # If trend = UP => single BUY
+                if trend == "UP" and last_action != "BUY":
+                    if usdc_balance > 1.2:
+                        used_usdc = min(usdc_balance, 200.0)  # example: choose up to 200 USDC
                         if used_usdc < 1.2:
-                            print("Skipping BUY - below 1.2 USDC threshold.")
-                            # skip the trade
+                            print(f"[{now_str}] Skipping BUY - below 1.2 USDC threshold.")
                         else:
                             fee = used_usdc * 0.001
                             spend_usdc = used_usdc - fee
@@ -95,49 +109,32 @@ def main():
                                 bought_amount = spend_usdc / current_price
                                 trump_balance += bought_amount
                                 usdc_balance -= used_usdc
-                                print(f"  Sim-BUY {bought_amount:.6f} TRUMP at {current_price:.5f}, spending {used_usdc:.2f} inc fee={fee:.2f}")
+                                last_entry_price = current_price
+                                last_action = "BUY"
+                                print(f"[{now_str}] Sim-BUY {bought_amount:.6f} TRUMP at {current_price:.5f}, spending {used_usdc:.2f} inc fee={fee:.2f}")
 
-                # (B) If trend = DOWN => SELL some portion of TRUMP
-                elif trend == "DOWN":
-                    # e.g. 20% of TRUMP holdings
+                # If trend = DOWN => single SELL
+                elif trend == "DOWN" and last_action != "SELL":
                     if trump_balance > 0.000001:
-                        sell_amount = trump_balance * 0.20
-                        gross_usdc = sell_amount * current_price
-                        # Enforce minimum trade value of 1.2 USDC
+                        gross_usdc = trump_balance * current_price
                         if gross_usdc < 1.2:
-                            print("Skipping SELL - below 1.2 USDC threshold.")
-                            # skip the trade
+                            print(f"[{now_str}] Skipping SELL - below 1.2 USDC threshold.")
                         else:
                             fee = gross_usdc * 0.001
                             net_usdc = gross_usdc - fee
 
-                            # For realized profit, we approximate cost basis from the portion sold.
-                            # We'll do a naive approach that the original cost basis was last price we acquired.
-                            # But a more accurate approach would track each buy-lot. Here, we keep it simple.
-                            # We'll track "realized profit" as if our 'average cost' was current_price for now.
-                            # (Better approach would store average cost basis for all TRUMP.)
-                            # For demonstration, let's treat the entire portion as though our cost was current_price
-                            # => realized_profit = net_usdc - (sell_amount * current_price)
-                            # => that's zero, so let's not add to total_profit. 
-                            #
-                            # If you want to track actual P/L, you'd need a weighted average cost approach.
-                            # For now, we won't increment total_profit_usdc from partial sells 
-                            # because we don't have cost basis subdivided. 
-                            #
-                            # We'll increment total_profit only if we assume a cost basis for the sold portion
-                            # is exactly current_price (that yields 0 P/L). 
-                            # Or you can store an "average buy in" if you'd like.
-
+                            # For realized profit, we need cost basis. We'll skip it or do naive approach:
+                            # realizedProfit remains 0 unless we track average cost.
                             usdc_balance += net_usdc
-                            trump_balance -= sell_amount
-                            print(f"  Sim-SELL {sell_amount:.6f} TRUMP at {current_price:.5f}, gross={gross_usdc:.2f}, fee={fee:.2f}, net={net_usdc:.2f} USDC")
+                            trump_balance = 0.0
+                            last_entry_price = current_price
+                            last_action = "SELL"
+                            print(f"[{now_str}] Sim-SELL ALL TRUMP at {current_price:.5f}, gross={gross_usdc:.2f}, fee={fee:.2f}, net={net_usdc:.2f} USDC")
 
-                # (C) FLAT => do nothing
-                # (D) Print quick balances
                 total_trump_value = trump_balance * current_price
                 total_equity = usdc_balance + total_trump_value
                 print(
-                    f"    usdc={usdc_balance:.2f}, trump={trump_balance:.6f} (~{total_trump_value:.2f} USDC), "
+                    f"[{now_str}] usdc={usdc_balance:.2f}, trump={trump_balance:.6f} (~{total_trump_value:.2f} USDC), "
                     f"realizedProfit={total_profit_usdc:.2f}, totalEquity={total_equity:.2f}\n"
                 )
 
@@ -148,7 +145,6 @@ def main():
                 time.sleep(5)
 
     except KeyboardInterrupt:
-        # On exit, show final results
         final_trump_value = trump_balance * current_price
         final_total = usdc_balance + final_trump_value
         print("\nShutting down read-only simulation...")
