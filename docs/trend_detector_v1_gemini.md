@@ -15,6 +15,47 @@ The Trend Detector v1 Gemini system uses a combination of technical indicators a
 *   **Parameter Optimization:** The system starts with default parameters and iteratively refines them to improve trading performance.
 *   **Risk Management:** Includes basic risk management with a minimum trade size and parameter adjustments to become more conservative during poor performance.
 
+## Trend Detector Script Logic Flow
+
+This section describes the logical flow of the `trend_detector_v1_gemini.py` script to help understand its inner workings.
+
+```mermaid
+graph LR
+A[Start Script] --> B(Load Configuration);
+B --> C{Check Data Source};
+C -- CSV File --> D(Read CSV Data);
+C -- InfluxDB --> E(Query InfluxDB);
+D --> F(Data Preprocessing);
+E --> F;
+F --> G{Select Trend Detection Method};
+G -- Simple Moving Average --> H(Apply SMA);
+G -- Linear Regression --> I(Apply Linear Regression);
+H --> J(Analyze Trend Results);
+I --> J;
+J --> K{Output Trend Report};
+K --> L{Display/Save Report};
+L --> M[End Script];
+style C fill:#f9f,stroke:#333,stroke-width:2px
+style G fill:#ccf,stroke:#333,stroke-width:2px
+style J fill:#ffc,stroke:#333,stroke-width:2px
+```
+
+The flowchart above illustrates the following steps:
+
+1.  **Start Script**: The script execution begins.
+2.  **Load Configuration**:  The script loads configurations from a file or environment variables, including data source details and trend detection method.
+3.  **Check Data Source**: The script determines the source of the time series data (e.g., CSV file or InfluxDB).
+4.  **Read Data**: Based on the data source, the script reads data either from a CSV file or by querying InfluxDB.
+5.  **Data Preprocessing**: The loaded data is preprocessed, which might include cleaning, formatting, and handling missing values.
+6.  **Select Trend Detection Method**: The script chooses a trend detection method based on the configuration (e.g., Simple Moving Average or Linear Regression).
+7.  **Apply Trend Detection Method**: The selected method is applied to the preprocessed data to identify trends.
+8.  **Analyze Trend Results**: The results from the trend detection method are analyzed to determine the presence and characteristics of trends.
+9.  **Output Trend Report**: A report summarizing the detected trends is generated.
+10. **Display/Save Report**: The report is either displayed to the user or saved to a file, depending on the script's configuration.
+11. **End Script**: The script execution completes.
+
+This visual representation should provide a clearer understanding of the script's logic and decision-making process.
+
 ## Strategy
 
 The trading strategy is based on the following technical indicators:
