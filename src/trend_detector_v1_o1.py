@@ -42,6 +42,8 @@ def parse_arguments():
     return parser.parse_args()
 
 def main():
+    global total_trump_cost  # <-- Now we're using the global variable
+
     args = parse_arguments()
     global THRESHOLD_VALUE
     THRESHOLD_VALUE = args.swing_threshold
@@ -145,10 +147,12 @@ def main():
                                 bought_amount = spend_usdc / current_price
                                 trump_balance += bought_amount
                                 usdc_balance -= used_usdc
+
+                                # Update total_trump_cost with the USDC spent.
+                                total_trump_cost += spend_usdc
+
                                 last_entry_price = current_price
                                 last_action = "BUY"
-
-                                # Record the trade, assume no immediate realized profit on a BUY
                                 record_trade("BUY", current_price, THRESHOLD_VALUE, 0.0)
                                 print(f"[{now_str}] Sim-BUY {bought_amount:.6f} TRUMP at {current_price:.5f}")
 
@@ -160,16 +164,14 @@ def main():
                             fee = gross_usdc * 0.001
                             net_usdc = gross_usdc - fee
 
-                            # (Optional) calculate approximate realized profit here.
-                            # For a real approach, track cost basis of TRUMP:
                             current_cost_basis = total_trump_cost * (gross_usdc / trump_balance)
                             realized_profit = (current_price * gross_usdc) - current_cost_basis
-                            total_trump_cost -= current_cost_basis
+                            total_trump_cost -= current_cost_basis  # remove sold portion from cost basis
+
                             usdc_balance += net_usdc
                             trump_balance = 0.0
                             last_entry_price = current_price
                             last_action = "SELL"
-
                             record_trade("SELL", current_price, THRESHOLD_VALUE, realized_profit)
                             print(f"[{now_str}] Sim-SELL ALL TRUMP at {current_price:.5f}, netUSDC={net_usdc:.2f} (profit={realized_profit:.2f})")
 

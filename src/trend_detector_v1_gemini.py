@@ -17,18 +17,19 @@ print("Signal module imported successfully:", 'signal' in globals()) # Check if 
 # --- Configuration ---
 API_KEY = os.environ.get('binance_api')
 API_SECRET = os.environ.get('binance_secret')
-SYMBOL = 'TRUMPUSDC'
+SYMBOL_raw = os.environ.get("SYMBOL", "TRUMPUSDC")  # Default to "TRUMPUSDC" if not set (still with space for now, corrected below)
+SYMBOL = SYMBOL_raw.strip() # Remove leading/trailing whitespace, important for API calls
 INITIAL_USDC = 500
 INITIAL_TRUMP_USDC_VALUE = 500
 MIN_TRADE_USDC = 1.2
 
 # --- Parameters for Self-Learning (Initial values, will be adjusted) ---
-FAST_MA_PERIOD = 12  # Initial period for fast moving average
-SLOW_MA_PERIOD = 26  # Initial period for slow moving average
+FAST_MA_PERIOD_DEFAULT = 5  # default value if env var is not set or invalid (Shorter period)
+SLOW_MA_PERIOD_DEFAULT = 20 # default value if env var is not set or invalid (Shorter period)
 RSI_PERIOD = 14       # Initial period for RSI
 RSI_OVERBOUGHT = 70  # Initial RSI overbought level
 RSI_OVERSOLD = 30   # Initial RSI oversold level
-STOP_LOSS_PERCENT = 0.05 # Initial stop loss percentage (5%)
+STOP_LOSS_PERCENT = float(os.environ.get("STOP_LOSS_PERCENT", 0.001)) # e.g., 0.001 for 0.1%
 TAKE_PROFIT_PERCENT = 0.10 # Initial take profit percentage (10%)
 
 # --- Global Variables ---
@@ -37,6 +38,31 @@ initial_trump_qty = 0.0
 current_strategy_params = {}
 historical_performance = []
 trading_enabled = True # Flag for trading loop - initialize here
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+GEMINI_API_SECRET = os.environ.get("GEMINI_API_SECRET")
+INVEST_USD = float(os.environ.get("INVEST_USD", 500))  # Default to 500 USD if not set
+PROFIT_THRESHOLD_PERCENT = float(os.environ.get("PROFIT_THRESHOLD_PERCENT", 0.002)) # e.g., 0.002 for 0.2%
+SLEEP_TIME = int(os.environ.get("SLEEP_TIME", 60*5))  # Default to 5 minutes if not set
+
+# try to read from env var and convert to int, otherwise use default
+try:
+    FAST_MA_PERIOD = int(os.environ.get("FAST_MA_PERIOD", FAST_MA_PERIOD_DEFAULT))
+except ValueError:
+    print(f"Warning: FAST_MA_PERIOD env var is not a valid integer, using default value: {FAST_MA_PERIOD_DEFAULT}")
+    FAST_MA_PERIOD = FAST_MA_PERIOD_DEFAULT
+except TypeError: # os.environ.get returns None if not set
+    print(f"Warning: FAST_MA_PERIOD env var is not set, using default value: {FAST_MA_PERIOD_DEFAULT}")
+    FAST_MA_PERIOD = FAST_MA_PERIOD_DEFAULT
+
+try:
+    SLOW_MA_PERIOD = int(os.environ.get("SLOW_MA_PERIOD", SLOW_MA_PERIOD_DEFAULT))
+except ValueError:
+    print(f"Warning: SLOW_MA_PERIOD env var is not a valid integer, using default value: {SLOW_MA_PERIOD_DEFAULT}")
+    SLOW_MA_PERIOD = SLOW_MA_PERIOD_DEFAULT
+except TypeError: # os.environ.get returns None if not set
+    print(f"Warning: SLOW_MA_PERIOD env var is not set, using default value: {SLOW_MA_PERIOD_DEFAULT}")
+    SLOW_MA_PERIOD = SLOW_MA_PERIOD_DEFAULT
 
 
 def initialize_client():
@@ -305,11 +331,17 @@ def calculate_rsi_pandas(series, period=14):
 def prepare_training_data(df):
     """Prepare data for training the ML model. (Simplified labeling for example)"""
     df['Signal'] = 0  # 0: NEUTRAL
-    df.loc[df['MA_fast'] > df['MA_slow'] + (0.001 * df['close']) , 'Signal'] = 1  # 1: BUY (Fast MA significantly above Slow MA)
-    df.loc[df['MA_fast'] < df['MA_slow'] - (0.001 * df['close']), 'Signal'] = -1 # -1: SELL (Fast MA significantly below Slow MA)
+    # Simplified signal logic: Use only MA crossover for training data generation
+    df.loc[df['MA_fast'] > df['MA_slow'], 'Signal'] = 1  # BUY if fast MA is above slow MA
+    df.loc[df['MA_fast'] < df['MA_slow'], 'Signal'] = -1 # SELL if fast MA is below slow MA
     df.dropna(inplace=True) # Ensure no NaNs after signal generation
     X = df[['MA_fast', 'MA_slow', 'RSI', 'Price_Change']] # Features
     y = df['Signal'] # Target variable (BUY, SELL, NEUTRAL)
+
+    # --- Debugging: Print signal distribution ---
+    print("Signal distribution in training data:")
+    print(y.value_counts())
+    # --- End debugging ---
     return train_test_split(X, y, test_size=0.2, random_state=42) # 80% train, 20% test
 
 
@@ -391,7 +423,7 @@ def main():
 
     # --- ML Model Training ---
     print("Fetching historical data for model training...")
-    historical_df = fetch_binance_data(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=3000) # Fetch more data
+    historical_df = fetch_binance_data(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=10000) # Fetch TRUMPUSDC, increased limit to 10000
     model = None # Initialize model to None
     if historical_df is None or historical_df.empty:
         print("Failed to fetch historical data for training. Exiting ML training.")
