@@ -69,5 +69,27 @@ flowchart TB
     J --> B
 ```
 
+## AutoARIMA-Based Approach
+- We use pmdarima's `auto_arima()` to train an ARIMA model on past price data. This allows the script to automatically determine optimal parameters (p, d, q, etc.) without manual tuning.
+- The script retrieves historical price data (e.g., last 200 bars) and fits the model at runtime.
 
--------------------------------------------------------------------------------- 
+## Key Functions
+- `train_auto_arima_model(historical_prices)`:  
+  This function trains the AutoARIMA model on recently fetched historical prices and returns the fitted model.
+- `decide_trade(current_price, model, steps_ahead=1)`:  
+  Uses the fitted model to predict a short-term future price and returns a simple "BUY" or "SELL" decision. 
+- `run_trading_strategy()`:  
+  Demonstrates an end-to-end process:  
+  1. Fetch historical data.  
+  2. Train (or update) the model.  
+  3. Get the latest price.  
+  4. Decide whether to buy or sell.  
+  5. Place an order if conditions are met.  
+
+## Initial Capital & TRUMP Holdings
+We assume you start with 500 USDC and a quantity of TRUMP coin worth 500 USDC at script start. The strategy will:
+1. Sell TRUMP if the market is predicted to go down (taking profit if possible).  
+2. Buy TRUMP if the model forecasts an uptrend (buying low if possible).  
+
+## Usage
+Make sure to install pmdarima if needed:

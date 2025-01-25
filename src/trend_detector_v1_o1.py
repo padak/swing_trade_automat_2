@@ -9,6 +9,8 @@ from binance.exceptions import BinanceAPIException, BinanceRequestException
 import pandas as pd
 from scipy import stats
 import statistics
+import numpy as np
+import pmdarima as pm
 
 trade_history = []  # We'll store info about each trade in-memory
 total_trump_cost = 500.0  # Track cost basis of TRUMP holdings
@@ -290,6 +292,74 @@ def auto_calibrate_threshold(current_threshold):
 
     # If no trades are recorded yet or something else is up, keep the same threshold
     return current_threshold
+
+def train_auto_arima_model(historical_prices):
+    """
+    Trains an AutoARIMA model on the provided historical price data.
+    Returns the fitted model that can be used to forecast future prices.
+    """
+    # Convert prices to a pandas Series if not already
+    price_series = pd.Series(historical_prices)
+
+    # Fit AutoARIMA model; it will auto-adjust parameters like p, d, q, etc.
+    # You may wish to adjust parameters such as seasonal=False, stepwise=True, etc. to suit your data
+    model = pm.auto_arima(
+        price_series,
+        start_p=1, start_q=1,
+        max_p=5, max_q=5,
+        seasonal=False,
+        trace=False,
+        error_action='ignore',
+        suppress_warnings=True
+    )
+    return model
+
+def decide_trade(current_price, model, steps_ahead=1):
+    """
+    Predicts future price based on the fitted model and decides whether to 
+    buy, sell, or hold. For simplicity, we look 1 step ahead.
+    """
+    forecast = model.predict(n_periods=steps_ahead)
+    predicted_price = forecast[-1]
+
+    # Basic logic demonstration: 
+    # If predicted price is above current price, consider BUY (or hold long).
+    # If predicted price is below current price, consider SELL (or reduce position).
+    if predicted_price > current_price:
+        return "BUY"
+    else:
+        return "SELL"
+
+def run_trading_strategy():
+    """
+    Main method (example) for running the auto-adjusting strategy. 
+    It uses historical data to train the model, then checks current price 
+    to decide on trades.
+    """
+    # Step 1: Retrieve historical data (closing prices)
+    # This might already exist in your script; we demonstrate a placeholder here
+    historical_prices = get_historical_price_data("TRUMP", limit=200)
+
+    # Step 2: Train the auto-arima model
+    arima_model = train_auto_arima_model(historical_prices)
+
+    # Step 3: Get current data
+    current_price = get_current_price("TRUMP")
+
+    # Step 4: Decide trade
+    trade_action = decide_trade(current_price, arima_model, steps_ahead=1)
+
+    # Step 5: Place order based on the decision
+    if trade_action == "BUY":
+        # Place a BUY order logic
+        # e.g., place_buy_order("TRUMP", quantity, current_price)
+        pass
+    else:
+        # Place a SELL order logic
+        # e.g., place_sell_order("TRUMP", quantity, current_price)
+        pass
+
+    # ... remaining code for handling orders, logging, etc.
 
 if __name__ == "__main__":
     main()
