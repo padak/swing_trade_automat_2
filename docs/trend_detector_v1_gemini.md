@@ -162,13 +162,13 @@ The system evaluates its performance periodically (every 10 iterations in the cu
 
 The script starts with the following initial parameters, which are then adjusted by the self-learning mechanism:
 
-*   `FAST_MA_PERIOD = 12`
-*   `SLOW_MA_PERIOD = 26`
-*   `RSI_PERIOD = 14`
-*   `RSI_OVERBOUGHT = 70`
-*   `RSI_OVERSOLD = 30`
-*   `STOP_LOSS_PERCENT = 0.05`
-*   `TAKE_PROFIT_PERCENT = 0.10`
+*   `FAST_MA_PERIOD = 5`: **Fast Moving Average Period.** This parameter defines the period for the fast moving average calculation. A shorter period (like 5) makes the moving average more sensitive to recent price changes, helping to identify short-term trends.
+*   `SLOW_MA_PERIOD = 20`: **Slow Moving Average Period.** This parameter defines the period for the slow moving average. A longer period (like 20) makes the moving average smoother and less sensitive to short-term fluctuations, representing longer-term trends.
+*   `RSI_PERIOD = 14`: **RSI Period.** This is the period used to calculate the Relative Strength Index (RSI). It determines the number of past periods used to measure the speed and change of price movements. A common value is 14.
+*   `RSI_OVERBOUGHT = 70`: **RSI Overbought Level.** This is the threshold above which the RSI is considered to indicate that an asset is overbought, suggesting it might be overvalued and could experience a price decline.
+*   `RSI_OVERSOLD = 30`: **RSI Oversold Level.** This is the threshold below which the RSI is considered to indicate that an asset is oversold, suggesting it might be undervalued and could experience a price increase.
+*   `STOP_LOSS_PERCENT = 0.001`: **Stop Loss Percentage.** This parameter defines the percentage below the purchase price at which a stop-loss order would be triggered to limit potential losses on a trade. For example, 0.001 represents 0.1%.
+*   `TAKE_PROFIT_PERCENT = 0.10`: **Take Profit Percentage.** This parameter defines the percentage above the purchase price at which a take-profit order would be triggered to secure profits on a trade. For example, 0.10 represents 10%.
 
 ## How to Use
 
@@ -232,4 +232,68 @@ The script starts with the following initial parameters, which are then adjusted
 *   **Parameter Tuning Range Limits:**
     *   Add limits to the parameter tuning ranges to prevent parameters from going to extreme or unrealistic values.
 
-This documentation provides a comprehensive guide to understanding and using the Trend Detector v1 Gemini system. Remember to use it responsibly and understand the risks involved in cryptocurrency trading. 
+This documentation provides a comprehensive guide to understanding and using the Trend Detector v1 Gemini system. Remember to use it responsibly and understand the risks involved in cryptocurrency trading.
+
+## Data Fetching and Processing
+
+To make trading decisions, the script fetches and processes market data from Binance at two main stages: **Initialization** and during each **Iteration** of the trading loop.
+
+### 1. Initialization Data Fetching
+
+When the script starts, it performs the following data fetching operations:
+
+*   **Fetching Current Price for Initial Quantity Calculation:**
+    *   The script first calls the `fetch_current_price(SYMBOL)` function to get the current price of the trading pair (e.g., `TRUMPUSDC`).
+    *   **Example:** If the current price of `TRUMPUSDC` is $55.00, this function will return `55.00`.
+    *   This price is used to calculate the initial quantity of `TRUMP` coins to hold, based on the `INITIAL_TRUMP_USDC_VALUE`.
+
+*   **Fetching Historical Data for ML Model Training (Optional):**
+    *   If the Machine Learning (ML) model training is enabled (which it is by default in the script), the script calls `fetch_binance_data(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=10000)`.
+    *   This function fetches historical candlestick data for the `TRUMPUSDC` pair from Binance.
+        *   `symbol=SYMBOL`: Specifies the trading pair, e.g., "TRUMPUSDC".
+        *   `interval=Client.KLINE_INTERVAL_1HOUR`:  Specifies the candlestick interval, in this case, 1-hour candles.
+        *   `limit=10000`:  Specifies the number of historical data points to fetch, here it's 10,000 hourly candles.
+    *   **Example of Historical Data:** The fetched data is a Pandas DataFrame containing columns like: `timestamp`, `open`, `high`, `low`, `close`, `volume`, etc. For ML training, the script primarily uses the `close` prices.  A snippet of the historical data might look like this:
+
+    ```
+                        close
+    timestamp
+    2024-01-01 00:00:00  54.50
+    2024-01-01 01:00:00  54.75
+    2024-01-01 02:00:00  55.20
+    ...
+    2024-02-02 10:00:00  56.10
+    ```
+    *   This historical data is then used to:
+        *   Calculate technical indicators like Moving Averages (MA) and Relative Strength Index (RSI) over historical periods.
+        *   Prepare features and labels to train the Logistic Regression Machine Learning model.
+        *   Train the ML model to predict trading signals based on historical patterns of MAs, RSI, and price changes.
+
+### 2. Iteration Data Fetching (Trading Loop)
+
+Inside the main trading loop (`while trading_enabled:`), in each iteration, the script fetches:
+
+*   **Current Price for Trading Decisions:**
+    *   In each iteration, `fetch_current_price(SYMBOL)` is called again to get the most up-to-date price of `TRUMPUSDC`.
+    *   **Example:** If in iteration 1, the current price is $55.25, and in iteration 2 (after a short delay), the price becomes $55.30, the script will fetch and use these updated prices in each iteration.
+
+### 3. Data Processing in Trading Loop Iterations
+
+With the current price fetched in each iteration, the script performs the following processing steps:
+
+1.  **Append to Price History:** The `current_price` is appended to the `prices_history` list, maintaining a history of recent prices.
+2.  **Generate Trading Signals:**
+    *   **Rule-Based Signal:**  `generate_trading_signal()` function uses the `prices_history` along with the current strategy parameters (`FAST_MA_PERIOD`, `SLOW_MA_PERIOD`, `RSI_PERIOD`, `RSI_OVERBOUGHT`, `RSI_OVERSOLD`) to calculate Moving Averages and RSI based on the historical prices and generate a "BUY", "SELL", or "NEUTRAL" signal.
+    *   **ML Model Signal (If Model is Trained):** If the ML model was successfully trained during initialization, `predict_signal(model, current_features)` is used. This function takes the latest calculated features (MA, RSI, Price Change based on recent `prices_history`) and uses the trained ML model to predict a trading signal ("BUY", "SELL", or "NEUTRAL").
+    *   **Signal Combination:** The script combines the rule-based and ML signals (if available) to determine the final trading `signal`. In the current logic, if the ML signal is not "NEUTRAL", it prioritizes the ML signal; otherwise, it uses the rule-based signal.
+3.  **Execute Trade (Simulated):**
+    *   `execute_trade(signal, current_price, usdc_balance, trump_balance)` simulates a trade based on the combined `signal`.
+    *   If the signal is "BUY" or "SELL" and the trade quantity meets the minimum trade value, it simulates the trade execution at the `current_price`.
+4.  **Update Balances:**
+    *   `update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details)` updates the simulated `usdc_balance` and `trump_balance` based on the executed trade (BUY or SELL) and records the trade details.
+5.  **Evaluate Performance:**
+    *   `evaluate_performance(initial_portfolio_value, current_portfolio_value)` calculates the current portfolio value and the profit/loss percentage since the beginning.
+6.  **Adjust Strategy Parameters (Periodically):**
+    *   Every 10 iterations, `adjust_strategy_parameters(avg_performance)` is called. This function looks at the average performance over the last 10 iterations and adjusts the trading strategy parameters (`FAST_MA_PERIOD`, `SLOW_MA_PERIOD`, `RSI_OVERBOUGHT`, `RSI_OVERSOLD`, `STOP_LOSS_PERCENT`) to try and improve future performance.
+
+By fetching the current price in each iteration and using the historical price data and technical indicators, the script continuously monitors the market, makes trading decisions, and adapts its strategy over time. 

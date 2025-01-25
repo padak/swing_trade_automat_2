@@ -16,17 +16,22 @@ trade_history = []  # We'll store info about each trade in-memory
 total_trump_cost = 500.0  # Track cost basis of TRUMP holdings
 realized_profit = 0.0
 
+# Global list to store trade history
+trades = []
+
 def record_trade(action, price, threshold_used, profit):
     """
     Log each trade so we can evaluate our strategy afterward.
     """
-    trade_history.append({
-        "action": action,          # BUY or SELL
-        "price": price,           # Price at time of trade
+    trade_dict = {
+        "action": action,        # BUY or SELL
+        "price": price,          # Price at time of trade
         "threshold": threshold_used,
-        "profit": profit,         # Realized profit from that trade, if any
-        "timestamp": time.time()  # or datetime.now()
-    })
+        "profit": profit if action == "SELL" else 0.0,
+        "timestamp": time.time() # or datetime.now()
+    }
+    trade_history.append(trade_dict)
+    print(f"DEBUG: Recorded trade => {trade_dict}")  # debug printing for clarity
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Trend Detector v1 - single transaction, with swing threshold.")
@@ -199,6 +204,10 @@ def main():
         print(f"Final USDC={usdc_balance:.2f}, TRUMP={trump_balance:.6f} (~{final_trump_value:.2f} USDC), total equity={final_total:.2f} USDC")
         print(f"Realized net profit recorded={total_profit_usdc:.2f} USDC")
 
+    # Then you can log or print the total realized PnL:
+    current_realized_pnl = calculate_realized_pnl()
+    print(f"Current realized PnL: {current_realized_pnl:.2f} USDC")
+
 def detect_trends(input_file):
     try:
         df = pd.read_csv(input_file)
@@ -275,12 +284,10 @@ def auto_calibrate_threshold(current_threshold):
     Example logic: reviews the last 5 trades recorded, sees if net profit
     is positive or negative, and adjusts threshold up/down by a small step.
     """
-
     recent_trades = trade_history[-5:]  # last 5 trades
-    net_profit = sum(t["profit"] for t in recent_trades)
+    # Only consider profit from SELL trades
+    net_profit = sum(t["profit"] for t in recent_trades if t["action"] == "SELL")
 
-    # Simple approach: if net_profit is negative, increase threshold. If positive, decrease threshold.
-    # This is very naive; you can refine or replace with your own logic!
     if len(recent_trades) > 0:
         if net_profit < 0:
             new_threshold = current_threshold + 0.1
@@ -292,8 +299,7 @@ def auto_calibrate_threshold(current_threshold):
                   f"lowering threshold from {current_threshold:.2f} to {new_threshold:.2f}")
         return new_threshold
 
-    # If no trades are recorded yet or something else is up, keep the same threshold
-    return current_threshold
+    return current_threshold  # If no trades or something else, keep existing threshold
 
 def train_auto_arima_model(historical_prices):
     """
@@ -362,6 +368,69 @@ def run_trading_strategy():
         pass
 
     # ... remaining code for handling orders, logging, etc.
+
+def execute_trade(signal, current_price, usdc_balance, trump_balance):
+    """
+    Helper function to place trades based on the detected signal.
+    For demonstration, using a simple immediate execute approach.
+    """
+    order_qty = 0
+    trade_type = "NEUTRAL"
+    order_status = "NONE"
+
+    # Example logic:
+    if signal == "BUY":
+        trade_type = "BUY"
+        # For example, use half of the USDC balance to buy TRUMP
+        trade_amount_usdc = usdc_balance / 2
+        if trade_amount_usdc >= 1.0: # ensure min trade size
+            order_qty = trade_amount_usdc / current_price
+            usdc_balance -= trade_amount_usdc
+            trump_balance += order_qty
+            order_status = "FILLED"
+
+    elif signal == "SELL":
+        trade_type = "SELL"
+        # For example, sell half of TRUMP holdings
+        sell_qty = trump_balance / 2
+        if sell_qty * current_price >= 1.0: # ensure min trade size
+            order_qty = sell_qty
+            trump_balance -= sell_qty
+            usdc_balance += sell_qty * current_price
+            order_status = "FILLED"
+
+    # Store trade details in the trades list
+    if order_status == "FILLED":
+        trades.append({
+            "timestamp": datetime.datetime.utcnow().isoformat(),
+            "signal": signal,
+            "trade_type": trade_type,
+            "qty": order_qty,
+            "price": current_price,
+            "usdc_balance_after": usdc_balance,
+            "trump_balance_after": trump_balance,
+            "status": order_status
+        })
+
+    return usdc_balance, trump_balance
+
+# Optional: function to calculate realized PnL
+def calculate_realized_pnl():
+    """
+    Example PnL calculation that pairs each SELL with its preceding BUY.
+    This is very simplistic and may need refinement for partial fills or multiple open orders.
+    """
+    realized_pnl = 0.0
+    last_buy = None
+
+    for trade in trades:
+        if trade["trade_type"] == "BUY":
+            last_buy = trade
+        elif trade["trade_type"] == "SELL" and last_buy:
+            # Realized PnL = (sell_price - buy_price) * qty
+            realized_pnl += (trade["price"] - last_buy["price"]) * trade["qty"]
+            last_buy = None
+    return realized_pnl
 
 if __name__ == "__main__":
     main()

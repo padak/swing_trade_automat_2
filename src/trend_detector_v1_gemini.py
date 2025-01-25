@@ -38,6 +38,8 @@ initial_trump_qty = 0.0
 current_strategy_params = {}
 historical_performance = []
 trading_enabled = True # Flag for trading loop - initialize here
+trade_history = [] # List to store trade details for performance reporting
+last_performance_iteration = 0 # To track when to reset trade history
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_API_SECRET = os.environ.get("GEMINI_API_SECRET")
@@ -150,30 +152,43 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
 def execute_trade(signal, current_price, usdc_balance, trump_balance):
     """Simulate trade execution."""
     trade_qty = 0.0
+    trade_details = {} # Dictionary to store trade details
 
     if signal == "BUY":
         trade_qty_usdc = usdc_balance * 0.99 # Use 99% of available USDC
         if trade_qty_usdc > MIN_TRADE_USDC:
             trade_qty = trade_qty_usdc / current_price
             print(f"BUY {SYMBOL}: Quantity: {trade_qty:.2f}, Price: {current_price}")
-            return "BUY", trade_qty
+            trade_details = {
+                "action": "BUY",
+                "price": current_price,
+                "quantity": trade_qty,
+                "timestamp": time.time()
+            }
+            return "BUY", trade_qty, trade_details
         else:
             print(f"BUY signal, but trade quantity below minimum. USDC balance: {usdc_balance}")
-            return "NEUTRAL", 0.0
+            return "NEUTRAL", 0.0, trade_details # Return empty trade_details
 
     elif signal == "SELL":
         trade_qty = trump_balance
         if trade_qty * current_price > MIN_TRADE_USDC:
             print(f"SELL {SYMBOL}: Quantity: {trade_qty:.2f}, Price: {current_price}")
-            return "SELL", trade_qty
+            trade_details = {
+                "action": "SELL",
+                "price": current_price,
+                "quantity": trade_qty,
+                "timestamp": time.time()
+            }
+            return "SELL", trade_qty, trade_details
         else:
             print(f"SELL signal, but trade value below minimum. TRUMP balance value: {trump_balance * current_price}")
-            return "NEUTRAL", 0.0
-    return "NEUTRAL", 0.0
+            return "NEUTRAL", 0.0, trade_details # Return empty trade_details
+    return "NEUTRAL", 0.0, trade_details # Return empty trade_details
 
 
-def update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance):
-    """Update USDC and TRUMP balances based on trade execution."""
+def update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details):
+    """Update USDC and TRUMP balances based on trade execution and record trade details."""
     if trade_action == "BUY":
         trade_qty_usdc = trade_qty * current_price # Calculate USDC spent
         if trade_qty_usdc > usdc_balance:
@@ -181,6 +196,7 @@ def update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_b
             return usdc_balance, trump_balance # No balance update
         usdc_balance -= trade_qty_usdc
         trump_balance += trade_qty
+        trade_details["usdc_spent"] = trade_qty_usdc # Record USDC spent
     elif trade_action == "SELL":
         trade_value_usdc = trade_qty * current_price # Calculate USDC gained
         if trade_qty > trump_balance:
@@ -188,6 +204,10 @@ def update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_b
             return usdc_balance, trump_balance # No balance update
         usdc_balance += trade_value_usdc
         trump_balance -= trade_qty
+        trade_details["usdc_gained"] = trade_value_usdc # Record USDC gained
+
+    if trade_details: # Only add to history if trade was executed (trade_details is not empty)
+        trade_history.append(trade_details)
     return usdc_balance, trump_balance
 
 
@@ -215,8 +235,8 @@ def adjust_strategy_parameters(performance_percent):
         print("Poor performance, adjusting parameters to be more conservative.")
     else:
         print("Moderate performance, minor parameter adjustments.")
-        FAST_MA_PERIOD = max(5, FAST_MA_PERIOD -0.5) # Slightly faster MA
-        SLOW_MA_PERIOD = min(50, SLOW_MA_PERIOD + 0.5) # Slightly slower MA
+        FAST_MA_PERIOD = int(max(5, FAST_MA_PERIOD -0.5)) # Slightly faster MA
+        SLOW_MA_PERIOD = int(min(50, SLOW_MA_PERIOD + 0.5)) # Slightly slower MA
 
 
     current_strategy_params = {
@@ -387,7 +407,7 @@ def signal_handler(sig, frame):
 
 
 def main():
-    global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled
+    global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled, trade_history, last_performance_iteration
 
     import signal # TRY IMPORTING SIGNAL AGAIN INSIDE MAIN - FOR TESTING
 
@@ -484,9 +504,9 @@ def main():
 
             print(f"Current Price: {current_price}, Combined Signal: {signal}")
 
-            trade_action, trade_qty = execute_trade(signal, current_price, usdc_balance, trump_balance)
+            trade_action, trade_qty, trade_details = execute_trade(signal, current_price, usdc_balance, trump_balance) # Capture trade_details
             if trade_action != "NEUTRAL":
-                usdc_balance, trump_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance)
+                usdc_balance, trump_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details) # Pass trade_details
 
 
         current_portfolio_value = usdc_balance + (trump_balance * current_price)
@@ -499,8 +519,25 @@ def main():
         if iteration % 10 == 0: # Adjust parameters every 10 iterations
             if len(historical_performance) >= 10: # Adjust based on last 10 iterations average performance
                 avg_performance = np.mean(historical_performance[-10:])
-                print(f"Average performance over last 10 iterations: {avg_performance:.2f}%")
+                print(f"\n--- Performance Report for last 10 iterations ---")
+                print(f"Average Performance: {avg_performance:.2f}%")
+
+                # --- Trade Summary ---
+                recent_trades = trade_history[last_performance_iteration:] # Trades since last report
+                buy_orders = [trade for trade in recent_trades if trade["action"] == "BUY"]
+                sell_orders = [trade for trade in recent_trades if trade["action"] == "SELL"]
+
+                buy_profit = sum([trade.get("usdc_spent", 0) for trade in buy_orders]) # Sum of USDC spent on buys (cost)
+                sell_profit = sum([trade.get("usdc_gained", 0) for trade in sell_orders]) # Sum of USDC gained on sells (revenue)
+                net_profit_trades = sell_profit - buy_profit # Approximating profit from trades
+
+                print(f"Trades in this period:")
+                print(f"  BUY Orders: {len(buy_orders)}")
+                print(f"  SELL Orders: {len(sell_orders)}")
+                print(f"  Net Profit from Trades (approx): {net_profit_trades:.2f} USDC") # Approximated net profit
+
                 adjust_strategy_parameters(avg_performance)
+                last_performance_iteration = len(trade_history) # Update last iteration index
 
 
         time.sleep(10) # Check price every 10 seconds
