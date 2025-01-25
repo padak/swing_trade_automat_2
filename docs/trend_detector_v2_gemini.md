@@ -50,16 +50,16 @@ graph TB
         FetchPrice -- Price Fetched --> UpdatePriceHistory[Update Price History DataFrame]
         FetchPrice -- No Price --> WaitRetry[Wait & Retry]
         WaitRetry --> Iteration_Start
-        UpdatePriceHistory --> CalculateIndicators[Calculate Indicators (MA, RSI, MACD, BB)]
+        UpdatePriceHistory --> CalculateIndicators[Calculate Indicators]
         CalculateIndicators --> SignalGen_Start[Signal Generation]
 
         subgraph Signal_Generation
-            SignalGen_Start --> GenerateSignal[Generate Trading Signal (Combined Indicators)]
+            SignalGen_Start --> GenerateSignal[Generate Trading Signal]
             GenerateSignal --> TradeDecision[Trading Signal Decision]
         end
 
-        TradeDecision -- BUY/SELL --> ExecuteTrade[Execute Trade Simulated (Dynamic Size, Stop/Take Profit)]
-        TradeDecision -- NEUTRAL --> PerfEval_NoSignal
+        TradeDecision -- BUY/SELL --> ExecuteTrade[Execute Trade]
+        TradeDecision -- NEUTRAL --> PerfEval_NoSignal[Performance Evaluation]
 
         subgraph Trade_Execution
             ExecuteTrade --> MinTradeCheck[Check Minimum Trade Quantity]
@@ -70,26 +70,26 @@ graph TB
             BuyOrder --> BalanceUpdate[Update Balances]
             SellOrder --> BalanceUpdate
             NoTrade --> BalanceUpdate
-            BalanceUpdate --> PerfEval_Signal
+            BalanceUpdate --> PerfEval_Signal[Performance Evaluation]
         end
 
-        PerfEval_Signal[Performance Evaluation After Signal] --> PortfolioEval
+        PerfEval_Signal --> PortfolioEval[Portfolio Evaluation]
         PerfEval_NoSignal --> PortfolioEval
 
-        PortfolioEval[Evaluate Portfolio Value & P/L] --> StorePerformance[Store Performance History]
-        StorePerformance --> ParameterAdjCheck[Check for Parameter Adjustment Interval]
-        ParameterAdjCheck -- Yes --> ParameterAdjust[Adjust Strategy Parameters]
-        ParameterAdjCheck -- Yes --> RunBacktestAdjParams[Run Backtest with Adjusted Parameters]
-        ParameterAdjCheck -- No --> LoopEnd[Loop End - Wait]
+        PortfolioEval --> StorePerformance[Store Performance History]
+        StorePerformance --> ParameterAdjCheck[Check Parameter Adjustment]
+        ParameterAdjCheck -- Yes --> ParameterAdjust[Adjust Parameters]
+        ParameterAdjCheck -- Yes --> RunBacktestAdjParams[Run Backtest]
+        ParameterAdjCheck -- No --> LoopEnd[Loop End]
         ParameterAdjust --> LoopEnd
         RunBacktestAdjParams --> LoopEnd
         LoopEnd --> WaitTime[Wait Time]
-        WaitTime --> CheckTradingEnabled[Check if Trading Enabled]
+        WaitTime --> CheckTradingEnabled[Check Trading Enabled]
         CheckTradingEnabled -- Yes --> Iteration_Start
-        CheckTradingEnabled -- No --> Trading_End[Trading Loop End - Exit]
+        CheckTradingEnabled -- No --> Trading_End[End Trading Loop]
     end
 
-    Trading_End --> Cleanup[Cleanup Optional]
+    Trading_End --> Cleanup[Cleanup]
     Cleanup --> Z[End]
     Fail --> Z
     Fail2 --> Z
