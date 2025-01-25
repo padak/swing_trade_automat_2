@@ -4,3 +4,9 @@ python-binance>=1.0.19
 # You may add other dependencies here as your project grows:
 # e.g., requests, python-dotenv for loading .env files, etc.
 python-dotenv>=1.0.0 
+
+# Added from the code block
+numpy>=1.23.5
+pandas>=1.3.0
+pandas_ta>=0.3.14b
+scipy>=1.7.0 

@@ -6,10 +6,16 @@ from datetime import datetime
 from dotenv import load_dotenv
 from binance.client import Client
 from binance.exceptions import BinanceAPIException, BinanceRequestException
+import pandas as pd
+from scipy import stats
+import pandas_ta as ta
+import numpy as np
 
 def main():
     parser = argparse.ArgumentParser(description="Trend Detector v1 - single transaction, with swing threshold.")
     parser.add_argument("--symbol", default="TRUMPUSDC", help="Symbol to trade (default: TRUMPUSDC)")
+    parser.add_argument('--threshold', type=float, default=0.5,
+                        help='Significance threshold for slope magnitude')
     args = parser.parse_args()
 
     load_dotenv()  # Load environment if needed for e.g. BINANCE_API_KEY, BINANCE_API_SECRET
@@ -150,6 +156,135 @@ def main():
         print("\nShutting down read-only simulation...")
         print(f"Final USDC={usdc_balance:.2f}, TRUMP={trump_balance:.6f} (~{final_trump_value:.2f} USDC), total equity={final_total:.2f} USDC")
         print(f"Realized net profit recorded={total_profit_usdc:.2f} USDC")
+
+def detect_trends(input_file):
+    try:
+        df = pd.read_csv(input_file)
+        df['date'] = pd.to_datetime(df['date'], format='%Y-%m-%d')  # Add explicit format
+        # ... existing code ...
+        result = {
+            'trend_direction': trend_direction,
+            'slope': slope,
+            'p_value': p_value,
+            'r_squared': model.score(X, y),  # New metric
+            'confidence_interval': {
+                'lower': conf_int[0][0],
+                'upper': conf_int[0][1]
+            }
+        }
+    except FileNotFoundError:
+        print(f"Error: File {input_file} not found")
+        return None
+    except pd.errors.EmptyDataError:
+        print("Error: Empty CSV file")
+        return None
+
+def check_normality(residuals):
+    """Check normality using Shapiro-Wilk test"""
+    stat, p = stats.shapiro(residuals)
+    return p > 0.05
+
+class SmartTrendDetector:
+    def __init__(self, data, risk_per_trade=0.02, atr_multiplier=3, rsi_window=14, ema_short=20, ema_long=50):
+        self.data = data
+        self.risk_per_trade = risk_per_trade  # Risk 2% of capital per trade
+        self.atr_multiplier = atr_multiplier
+        self.rsi_window = rsi_window
+        self.ema_short = ema_short
+        self.ema_long = ema_long
+        self.account_balance = 10000  # Starting balance
+        self.position_size = 0
+        self.stop_loss = 0
+        self.take_profit = 0
+        
+        # Calculate indicators
+        self._calculate_indicators()
+        
+    def _calculate_indicators(self):
+        # Core trend indicators
+        self.data['EMA_short'] = ta.ema(self.data['close'], length=self.ema_short)
+        self.data['EMA_long'] = ta.ema(self.data['close'], length=self.ema_long)
+        
+        # Momentum and volatility indicators
+        self.data['RSI'] = ta.rsi(self.data['close'], length=self.rsi_window)
+        self.data['ATR'] = ta.atr(self.data['high'], self.data['low'], self.data['close'], length=14)
+        
+        # Volume analysis
+        self.data['VWAP'] = ta.vwap(self.data['high'], self.data['low'], self.data['close'], self.data['volume'])
+        self.data['OBV'] = ta.obv(self.data['close'], self.data['volume'])
+        
+        # Advanced indicators
+        self.data['ADX'] = ta.adx(self.data['high'], self.data['low'], self.data['close'], length=14)['ADX_14']
+        self.data['MACD'] = ta.macd(self.data['close'], fast=12, slow=26, signal=9)['MACD_12_26_9']
+        self.data['BBANDS_upper'], self.data['BBANDS_mid'], self.data['BBANDS_lower'] = ta.bbands(
+            self.data['close'], length=20, std=2)
+        
+    def analyze(self):
+        latest = self.data.iloc[-1]
+        prev = self.data.iloc[-2]
+        
+        # Trend direction logic
+        ema_bullish = latest['EMA_short'] > latest['EMA_long'] and prev['EMA_short'] <= prev['EMA_long']
+        ema_bearish = latest['EMA_short'] < latest['EMA_long'] and prev['EMA_short'] >= prev['EMA_long']
+        
+        # Trend strength filter
+        strong_trend = latest['ADX'] > 25
+        weak_trend = latest['ADX'] < 20
+        
+        # Volume confirmation
+        volume_spike = latest['volume'] > 1.5 * self.data['volume'].rolling(20).mean().iloc[-1]
+        obv_confirmation = latest['OBV'] > self.data['OBV'].rolling(20).mean().iloc[-1]
+        
+        # Risk management calculations
+        atr = latest['ATR']
+        price = latest['close']
+        self.position_size = (self.account_balance * self.risk_per_trade) / (self.atr_multiplier * atr)
+        self.stop_loss = price - self.atr_multiplier * atr if ema_bullish else price + self.atr_multiplier * atr
+        self.take_profit = price + 2 * self.atr_multiplier * atr if ema_bullish else price - 2 * self.atr_multiplier * atr
+        
+        # Generate signals
+        signal = "HOLD"
+        confidence = 0
+        
+        # Trend following entry
+        if ema_bullish and strong_trend and volume_spike and obv_confirmation:
+            if latest['RSI'] < 70 and latest['close'] > latest['VWAP']:
+                signal = "BUY"
+                confidence = min(90, latest['ADX'] / 0.4)
+        elif ema_bearish and strong_trend and volume_spike and obv_confirmation:
+            if latest['RSI'] > 30 and latest['close'] < latest['VWAP']:
+                signal = "SELL"
+                confidence = min(90, latest['ADX'] / 0.4)
+                
+        # Mean reversion strategy during weak trends
+        if weak_trend:
+            if latest['close'] < latest['BBANDS_lower'] and latest['RSI'] < 35:
+                signal = "BUY"
+                confidence = 65
+            elif latest['close'] > latest['BBANDS_upper'] and latest['RSI'] > 65:
+                signal = "SELL"
+                confidence = 65
+                
+        # Add divergence detection
+        price_higher_high = latest['close'] > prev['close'] and latest['high'] > prev['high']
+        rsi_lower_high = latest['RSI'] < prev['RSI']
+        if price_higher_high and rsi_lower_high and latest['RSI'] > 70:
+            signal = "SELL"
+            confidence = 75
+            
+        return {
+            "signal": signal,
+            "confidence": round(confidence, 1),
+            "stop_loss": round(self.stop_loss, 2),
+            "take_profit": round(self.take_profit, 2),
+            "position_size": round(self.position_size, 2),
+            "risk_reward_ratio": 2.0
+        }
+
+# Example usage:
+# data = pd.read_csv('price_data.csv')
+# detector = SmartTrendDetector(data)
+# print(detector.analyze())
 
 if __name__ == "__main__":
     main()
