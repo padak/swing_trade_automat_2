@@ -145,19 +145,38 @@ def calculate_rsi(prices, period):
 
 
 def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, rsi_overbought, rsi_oversold):
-    """Generate trading signal based on moving averages and RSI."""
-    fast_ma, slow_ma = calculate_moving_averages(prices, fast_ma_period, slow_ma_period)
-    rsi_value = calculate_rsi(prices, rsi_period)
+    """
+    Generates a trading signal based on Moving Averages and RSI.
+    Returns: signal, trend, ma_fast, ma_slow
+    """
+    df = pd.DataFrame({'close': prices})
+    df['MA_fast'] = df['close'].rolling(window=fast_ma_period).mean()
+    df['MA_slow'] = df['close'].rolling(window=slow_ma_period).mean()
+    df['RSI'] = calculate_rsi_pandas(df['close'], rsi_period)
 
-    if not fast_ma.size or not slow_ma.size or not rsi_value.size:
-        return "NEUTRAL"
+    signal = "NEUTRAL"
+    trend = "NEUTRAL" # Initialize trend
+    ma_fast_value = df['MA_fast'].iloc[-1] if not df['MA_fast'].empty else np.nan # Get last MA_fast value, handle empty case
+    ma_slow_value = df['MA_slow'].iloc[-1] if not df['MA_slow'].empty else np.nan # Get last MA_slow value, handle empty case
 
-    if fast_ma > slow_ma and rsi_value < rsi_oversold:
-        return "BUY"
-    elif fast_ma < slow_ma and rsi_value < rsi_overbought: # Corrected condition - was duplicate of BUY condition in previous version
-        return "SELL"
+    last_row = df.iloc[-1]
+
+    if last_row['MA_fast'] > last_row['MA_slow']:
+        trend = "UPTREND"
+    elif last_row['MA_fast'] < last_row['MA_slow']:
+        trend = "DOWNTREND"
     else:
-        return "NEUTRAL"
+        trend = "NEUTRAL"
+
+    if trend == "UPTREND" and last_row['RSI'] < rsi_oversold:
+        signal = "BUY"
+    elif trend == "DOWNTREND" and last_row['RSI'] > rsi_overbought:
+        signal = "SELL"
+    else:
+        signal = "NEUTRAL"
+
+    print(f"Debug in generate_trading_signal: MA_Fast value: {ma_fast_value}, MA_Slow value: {ma_slow_value}") # Debug print - ADDED
+    return signal, trend, ma_fast_value, ma_slow_value # Return signal, trend, and MA values
 
 
 def execute_trade(signal, current_price, usdc_balance, trump_balance):
@@ -229,25 +248,39 @@ def evaluate_performance(initial_portfolio_value, current_portfolio_value):
     return profit_loss_percent
 
 
-def adjust_strategy_parameters(avg_performance, current_params):
+def adjust_strategy_parameters(average_performance, current_params):
     """Adjusts strategy parameters based on recent performance."""
-    print(f"Average performance over last period: {avg_performance:.2f}%")
+    print(f"\n--- Parameter Adjustment ---")
+    print(f"Current RSI Overbought: {current_params['RSI_OVERBOUGHT']}, Oversold: {current_params['RSI_OVERSOLD']}") # Debug: Before adjustment
+    print(f"Debug: Full params BEFORE adjustment logic: {current_params}") # Debug: Full params before logic
 
-    if avg_performance > 0.1:
-        print("Good performance, tightening parameters slightly.")
-        current_params["RSI_OVERBOUGHT"] = max(current_params["RSI_OVERBOUGHT"] - 2, 60)
-        current_params["RSI_OVERSOLD"] = min(current_params["RSI_OVERSOLD"] + 2, 40)
-        print("Tightening RSI parameters.")
-    elif avg_performance < -0.1:
+    if average_performance < -0.5: # Poor performance threshold
         print("Poor performance, loosening parameters slightly.")
-        current_params["RSI_OVERBOUGHT"] = min(current_params["RSI_OVERBOUGHT"] + 2, 80)
-        current_params["RSI_OVERSOLD"] = max(current_params["RSI_OVERSOLD"] - 2, 20)
-        print("Loosening RSI parameters.")
-    else:
-        print("Moderate performance, minor parameter adjustments.")
-        # Minor adjustments or no adjustments
+        if current_params['RSI_OVERBOUGHT'] < 80:
+            current_params['RSI_OVERBOUGHT'] += 2
+            print("Loosening RSI parameters.")
+        if current_params['RSI_OVERSOLD'] > 20:
+            current_params['RSI_OVERSOLD'] -= 2
+            print("Loosening RSI parameters.")
+        print(f"Adjusted strategy parameters: RSI Overbought={current_params['RSI_OVERBOUGHT']}, RSI Oversold={current_params['RSI_OVERSOLD']}") # Debug: After loosening
+        print(f"Debug: Full params AFTER loosening: {current_params}") # Debug: Full params after loosening
 
-    print(f"Adjusted strategy parameters: RSI Overbought={current_params['RSI_OVERBOUGHT']}, RSI Oversold={current_params['RSI_OVERSOLD']}")
+    elif average_performance > 0.5: # Good performance threshold
+        print("Good performance, tightening parameters slightly.")
+        if current_params['RSI_OVERBOUGHT'] > 60:
+            current_params['RSI_OVERBOUGHT'] -= 2
+            print("Tightening RSI parameters.")
+        if current_params['RSI_OVERSOLD'] < 40:
+            current_params['RSI_OVERSOLD'] += 2
+            print("Tightening RSI parameters.")
+        print(f"Adjusted strategy parameters: RSI Overbought={current_params['RSI_OVERBOUGHT']}, RSI Oversold={current_params['RSI_OVERSOLD']}") # Debug: After tightening
+        print(f"Debug: Full params AFTER tightening: {current_params}") # Debug: Full params after tightening
+    else:
+        print("Performance within acceptable range, no parameter adjustment needed.")
+        print(f"Debug: Full params - NO adjustment: {current_params}") # Debug: Full params - no adjustment
+
+    print(f"Debug: Parameters after adjustment: {current_params}") # Debug: Full params after adjustment
+    print(f"Debug: Keys after adjustment: {current_params.keys()}") # Debug: Keys after adjustment
     return current_params
 
 
@@ -415,11 +448,48 @@ def signal_handler(sig, frame):
             print(f"Error saving ML model: {e}")
 
 
-def log_data(log_file, log_message):
-    """Logs data to a CSV file."""
-    with open(log_file, mode='a', newline='') as csvfile:
-        log_writer = csv.writer(csvfile)
-        log_writer.writerow(log_message)
+def log_data(log_file_path, log_message):
+    """Logs trading data to a CSV file."""
+    log_file_exists = os.path.isfile(log_file_path)
+    log_header = ["Timestamp", "Iteration", "Price", "Signal", "Trend", "USDC_Balance", "TRUMP_Balance", "Portfolio_Value", "P/L_Percent", "Trade_Action", "Trade_Quantity", "Trade_Price", "RSI_Overbought", "RSI_Oversold", "MA_Fast", "MA_Slow"]
+    try:
+        with open(log_file_path, mode='a', newline='') as logfile:
+            log_writer = csv.DictWriter(logfile, fieldnames=log_header) # Use DictWriter
+            if not log_file_exists:
+                log_writer.writeheader() # Write header using DictWriter
+            log_writer.writerow(log_message) # Write dictionary directly
+            print(f"Debug in log_data: log_message = {log_message}") # Debug print in log_data
+    except Exception as e:
+        print(f"Logging error: {e}")
+
+
+def prepare_log_message(current_time_str, iteration, current_price, signal, trend, usdc_balance, trump_balance, current_portfolio_value, performance_percent, trade_action, trade_qty, trade_details, current_strategy_params, ma_fast, ma_slow):
+    """Prepares the log message as a dictionary."""
+    try: # Add try-except block
+        log_message_dict = {
+            "Timestamp": current_time_str,
+            "Iteration": iteration,
+            "Price": current_price,
+            "Signal": signal,
+            "Trend": trend,
+            "USDC_Balance": f"{usdc_balance:.2f}",
+            "TRUMP_Balance": f"{trump_balance:.2f}",
+            "Portfolio_Value": f"{current_portfolio_value:.2f}",
+            "P/L_Percent": f"{performance_percent:.2f}",
+            "Trade_Action": trade_action,
+            "Trade_Quantity": trade_qty,
+            "Trade_Price": trade_details.get("price", ""),
+            "RSI_Overbought": current_strategy_params.get("RSI_OVERBOUGHT", "KEY_ERROR"),
+            "RSI_Oversold": current_strategy_params.get("RSI_Oversold", "KEY_ERROR"),
+            "MA_Fast": ma_fast,
+            "MA_Slow": ma_slow,
+        }
+        print(f"Debug INSIDE prepare_log_message - current_strategy_params keys: {log_message_dict.keys()}") # Debug: Keys in prepare_log_message - MOVED
+        print(f"Debug INSIDE prepare_log_message - current_strategy_params: {log_message_dict}") # Debug: Full params in prepare_log_message - MOVED
+        return log_message_dict
+    except Exception as e: # Catch any exception
+        print(f"Error in prepare_log_message: {e}") # Log the error
+        return {} # Return an empty dictionary in case of error
 
 
 def main():
@@ -445,10 +515,12 @@ def main():
     initial_portfolio_value = INITIAL_USDC + INITIAL_TRUMP_USDC_VALUE
     benchmark_portfolio_value_history = [] # NEW: History for benchmark portfolio value - ADDED HERE
 
-    current_strategy_params = {}
-    current_strategy_params = load_strategy_params()
+    initial_strategy_params = load_strategy_params()
+    current_strategy_params = initial_strategy_params.copy() # Use .copy() to avoid modifying initial params
+    print(f"Debug: Loaded strategy parameters: {current_strategy_params}")
+    print(f"Debug: id(current_strategy_params) after load = {id(current_strategy_params)}") # Debug: ID after load
     print(f"Debug: current_strategy_params after load_strategy_params: {current_strategy_params}")
-    print(f"Initial strategy parameters: {current_strategy_params}")
+    print(f"Initial strategy parameters: {initial_strategy_params}")
 
     # --- ML Model Training ---
     print("Fetching historical data for model training...")
@@ -507,7 +579,7 @@ def main():
     # Write CSV header
     with open(log_file, mode='w', newline='') as csvfile:
         log_writer = csv.writer(csvfile)
-        log_writer.writerow(['Timestamp', 'Iteration', 'Price', 'Signal', 'USDC_Balance', 'TRUMP_Balance', 'Portfolio_Value', 'P/L_Percent', 'Trade_Action', 'Trade_Quantity', 'Trade_Price', 'RSI_Overbought', 'RSI_Oversold'])
+        log_writer.writerow(['Timestamp', 'Iteration', 'Price', 'Signal', 'Trend', 'USDC_Balance', 'TRUMP_Balance', 'Portfolio_Value', 'P/L_Percent', 'Trade_Action', 'Trade_Quantity', 'Trade_Price', 'RSI_Overbought', 'RSI_Oversold', 'MA_Fast', 'MA_Slow'])
 
 
     while trading_enabled: # Run as long as trading is enabled (can be stopped by CTRL+C)
@@ -524,12 +596,15 @@ def main():
         prices_history.append(current_price) # Append current price to history
 
         signal = "NEUTRAL" # Initialize signal
-        trade_action = "NEUTRAL" # Initialize trade_action
-        trade_qty = 0.0
-        trade_details = {}
+        trend = "NEUTRAL" # Initialize trend
+        ma_fast = np.nan    # Initialize MA_fast
+        ma_slow = np.nan    # Initialize MA_slow
+        trade_action = "NEUTRAL" # Initialize trade_action - ADDED
+        trade_qty = 0.0 # Initialize trade_qty - ADDED
+        trade_details = {} # Initialize trade_details - ADDED
 
         if len(prices_history) > current_strategy_params["SLOW_MA_PERIOD"]: # Ensure enough data for indicators
-            signal = generate_trading_signal(prices_history, current_strategy_params["FAST_MA_PERIOD"], current_strategy_params["SLOW_MA_PERIOD"], current_strategy_params["RSI_PERIOD"], current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"])
+            signal, trend, ma_fast, ma_slow = generate_trading_signal(prices_history, current_strategy_params["FAST_MA_PERIOD"], current_strategy_params["SLOW_MA_PERIOD"], current_strategy_params["RSI_PERIOD"], current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"])
             portfolio_value = usdc_balance + (trump_balance * current_price) # Portfolio value before trade
             print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC")
 
@@ -549,10 +624,8 @@ def main():
         benchmark_portfolio_value_history.append(benchmark_portfolio_value) # Store benchmark value - ADDED HERE
 
         # Log data for each iteration
-        print(f"Debug: current_strategy_params before logging: {current_strategy_params}")
-        log_message = [current_time_str, iteration, current_price, signal, f"{usdc_balance:.2f}", f"{trump_balance:.2f}", f"{current_portfolio_value:.2f}", f"{performance_percent:.2f}", trade_action, trade_qty, trade_details.get("price", ""), current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"]] # Include RSI params in log
+        log_message = prepare_log_message(current_time_str, iteration, current_price, signal, trend, usdc_balance, trump_balance, current_portfolio_value, performance_percent, trade_action, trade_qty, trade_details, current_strategy_params, ma_fast, ma_slow)
         log_data(log_file, log_message)
-
 
         if iteration % 10 == 0: # Adjust parameters every 10 iterations
             if len(historical_performance) >= 10: # Adjust based on last 10 iterations average performance
@@ -593,8 +666,11 @@ def main():
 
                 current_strategy_params = adjust_strategy_parameters(avg_performance, current_strategy_params)
 
+                print(f"Debug BEFORE PARAMS_ADJUST LOG - current_strategy_params keys: {current_strategy_params.keys()}") # Debug: Keys before params adjust log
+                print(f"Debug BEFORE PARAMS_ADJUST LOG - current_strategy_params: {current_strategy_params}") # Debug: Full params before params adjust log
+                print(f"Debug: id(current_strategy_params) before params adjust log = {id(current_strategy_params)}") # Debug: ID before params adjust log
                 # Log parameter adjustments
-                log_message_params_adjust = [current_time_str, iteration, "-", "PARAMS_ADJUST", "-", "-", "-", "-", "-", "-", "-", current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"]] # Log parameter adjustments
+                log_message_params_adjust = [current_time_str, iteration, "-", "PARAMS_ADJUST", "-", "-", "-", "-", "-", "-", "-", current_strategy_params.get("RSI_OVERBOUGHT", "KEY_ERROR"), current_strategy_params.get("RSI_Oversold", "KEY_ERROR")] # Log parameter adjustments - USE .get()
                 log_data(log_file, log_message_params_adjust)
 
 
@@ -606,22 +682,34 @@ def main():
 def load_strategy_params():
     """Loads strategy parameters from environment variables or defaults."""
     params = {
-        "FAST_MA_PERIOD": int(os.environ.get("FAST_MA_PERIOD", FAST_MA_PERIOD_DEFAULT)),
-        "SLOW_MA_PERIOD": int(os.environ.get("SLOW_MA_PERIOD", SLOW_MA_PERIOD_DEFAULT)),
-        "RSI_PERIOD": int(os.environ.get("RSI_PERIOD", RSI_PERIOD_DEFAULT)),
-        "RSI_OVERBOUGHT": int(os.environ.get("RSI_OVERBOUGHT", RSI_OVERBOUGHT_DEFAULT)),
-        "RSI_OVERSOLD": int(os.environ.get("RSI_OVERSOLD", RSI_OVERSOLD_DEFAULT)),
-        "MACD_FAST_PERIOD": int(os.environ.get("MACD_FAST_PERIOD", MACD_FAST_PERIOD_DEFAULT)),
-        "MACD_SLOW_PERIOD": int(os.environ.get("MACD_SLOW_PERIOD", MACD_SLOW_PERIOD_DEFAULT)),
-        "MACD_SIGNAL_PERIOD": int(os.environ.get("MACD_SIGNAL_PERIOD", MACD_SIGNAL_PERIOD_DEFAULT)),
-        "BOLLINGER_BAND_PERIOD": int(os.environ.get("BOLLINGER_BAND_PERIOD", BOLLINGER_BAND_PERIOD_DEFAULT)),
-        "BOLLINGER_BAND_STD": int(os.environ.get("BOLLINGER_BAND_STD", BOLLINGER_BAND_STD_DEFAULT)),
-        "STOP_LOSS_PERCENT": float(os.environ.get("STOP_LOSS_PERCENT", STOP_LOSS_PERCENT_DEFAULT)),
-        "TAKE_PROFIT_PERCENT": float(os.environ.get("TAKE_PROFIT_PERCENT", TAKE_PROFIT_PERCENT_DEFAULT)),
-        "TRADE_RISK_PERCENT": float(os.environ.get("TRADE_RISK_PERCENT", TRADE_RISK_PERCENT_DEFAULT)),
+        'FAST_MA_PERIOD': FAST_MA_PERIOD_DEFAULT,
+        'SLOW_MA_PERIOD': SLOW_MA_PERIOD_DEFAULT,
+        'RSI_PERIOD': RSI_PERIOD_DEFAULT,
+        'RSI_OVERBOUGHT': RSI_OVERBOUGHT_DEFAULT,
+        'RSI_OVERSOLD': RSI_OVERSOLD_DEFAULT,
+        'MACD_FAST_PERIOD': MACD_FAST_PERIOD_DEFAULT,
+        'MACD_SLOW_PERIOD': MACD_SLOW_PERIOD_DEFAULT,
+        'MACD_SIGNAL_PERIOD': MACD_SIGNAL_PERIOD_DEFAULT,
+        'BOLLINGER_BAND_PERIOD': BOLLINGER_BAND_PERIOD_DEFAULT,
+        'BOLLINGER_BAND_STD': BOLLINGER_BAND_STD_DEFAULT,
+        'STOP_LOSS_PERCENT': STOP_LOSS_PERCENT_DEFAULT,
+        'TAKE_PROFIT_PERCENT': TAKE_PROFIT_PERCENT_DEFAULT,
+        'TRADE_RISK_PERCENT': TRADE_RISK_PERCENT_DEFAULT
     }
-    print(f"Debug: params dictionary inside load_strategy_params: {params}") # Debug print - ADDED HERE
-    print(f"Loaded strategy parameters: {params}")
+    print(f"Debug: params dictionary inside load_strategy_params: {params}") # Debug print here
+
+    # Override defaults with environment variables if set
+    for key in params:
+        env_var_value = os.environ.get(key)
+        if env_var_value is not None:
+            try:
+                params[key] = type(params[key])(env_var_value) # Attempt to cast to default type
+            except ValueError:
+                print(f"Warning: Invalid value '{env_var_value}' for env var '{key}', using default value: {params[key]}")
+            except TypeError:
+                print(f"Warning: Type error for env var '{key}', using default value: {params[key]}")
+
+    print(f"Debug: Loaded strategy parameters: {params}") # Debug print after env var overrides
     return params
 
 

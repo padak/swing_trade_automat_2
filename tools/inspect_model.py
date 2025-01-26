@@ -1,6 +1,7 @@
 from joblib import load
+import os
 
-def inspect_trained_model(model_path='trading_model.joblib'):
+def inspect_trained_model(model_path='src/trading_model.joblib'):
     """
     Loads a trained Logistic Regression model from a joblib file and prints its attributes.
 

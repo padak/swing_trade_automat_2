@@ -1,8 +1,9 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import os
 
-def plot_trading_log(log_filepath='trading_log.csv'):
+def plot_trading_log(log_filepath='src/trading_log.csv'):
     """
     Reads a trading log CSV file, plots portfolio value, price, and trade signals over time.
 
