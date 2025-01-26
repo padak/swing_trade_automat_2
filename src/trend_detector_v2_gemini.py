@@ -31,8 +31,8 @@ MIN_TRADE_USDC = 1.2
 FAST_MA_PERIOD_DEFAULT = 12
 SLOW_MA_PERIOD_DEFAULT = 26
 RSI_PERIOD_DEFAULT = 14
-RSI_OVERBOUGHT_DEFAULT = 70
-RSI_OVERSOLD_DEFAULT = 30
+RSI_OVERBOUGHT_DEFAULT = 65  # Adjusted RSI Overbought level to 65
+RSI_OVERSOLD_DEFAULT = 35   # Adjusted RSI Oversold level to 35
 MACD_FAST_PERIOD_DEFAULT = 12
 MACD_SLOW_PERIOD_DEFAULT = 26
 MACD_SIGNAL_PERIOD_DEFAULT = 9
@@ -165,34 +165,66 @@ def fetch_ma_from_binance(symbol, interval="1m", fast_period=7, slow_period=25):
         return np.nan, np.nan
 
 
-def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, rsi_overbought, rsi_oversold):
+def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, rsi_overbought, rsi_oversold, macd_fast_period, macd_slow_period, macd_signal_period):
     """
-    Generates a trading signal based on Moving Averages and RSI.
-    Returns: signal, trend, ma_fast, ma_slow
+    Generates a trading signal based on Moving Averages, RSI, and MACD.
+    Returns: signal, trend, ma_fast, ma_slow, rsi_value, macd_value, macd_signal_value
     """
     signal = "NEUTRAL"
     trend = "NEUTRAL"
-    
+    macd_value = np.nan
+    macd_signal_value = np.nan
+
     # First try to get MA values from Binance as a baseline
     ma_fast_value, ma_slow_value = fetch_ma_from_binance(SYMBOL)
     
-    # Try to calculate local MAs if we have enough data
-    if len(prices) > slow_ma_period:
-        df = pd.DataFrame({'close': prices['close']})
-        df['MA_fast'] = df['close'].rolling(window=fast_ma_period).mean()
-        df['MA_slow'] = df['close'].rolling(window=slow_ma_period).mean()
-        df['RSI'] = calculate_rsi_pandas(df['close'], rsi_period)
-        
-        # Get last values from local data if available
-        if not df['MA_fast'].empty and not df['MA_slow'].empty:
-            local_ma_fast = df['MA_fast'].iloc[-1]
-            local_ma_slow = df['MA_slow'].iloc[-1]
-            # Only use local values if they're not nan
-            if not np.isnan(local_ma_fast) and not np.isnan(local_ma_slow):
-                ma_fast_value = local_ma_fast
-                ma_slow_value = local_ma_slow
-        rsi_value = df['RSI'].iloc[-1] if not df['RSI'].empty else 50  # Default RSI if not enough data
+    # Try to calculate local indicators if we have enough data
+    required_periods = max(slow_ma_period, macd_slow_period + macd_signal_period)
+    if len(prices) > required_periods:
+        try:
+            df = pd.DataFrame({'close': prices['close']})
+            df['MA_fast'] = df['close'].rolling(window=fast_ma_period).mean()
+            df['MA_slow'] = df['close'].rolling(window=slow_ma_period).mean()
+            df['RSI'] = calculate_rsi_pandas(df['close'], rsi_period)
+            
+            # Calculate MACD using pandas_ta
+            try:
+                macd = ta.macd(df['close'], 
+                              fast=macd_fast_period, 
+                              slow=macd_slow_period, 
+                              signal=macd_signal_period)
+                
+                if macd is not None and not macd.empty:
+                    df['MACD_line'] = macd[f'MACD_{macd_fast_period}_{macd_slow_period}_{macd_signal_period}']
+                    df['MACD_signal'] = macd[f'MACDs_{macd_fast_period}_{macd_slow_period}_{macd_signal_period}']
+                else:
+                    df['MACD_line'] = np.nan
+                    df['MACD_signal'] = np.nan
+            except Exception as e:
+                print(f"Error calculating MACD: {e}")
+                df['MACD_line'] = np.nan
+                df['MACD_signal'] = np.nan
+            
+            # Get last values from local data if available
+            if not df['MA_fast'].empty and not df['MA_slow'].empty:
+                local_ma_fast = df['MA_fast'].iloc[-1]
+                local_ma_slow = df['MA_slow'].iloc[-1]
+                # Only use local values if they're not nan
+                if not np.isnan(local_ma_fast) and not np.isnan(local_ma_slow):
+                    ma_fast_value = local_ma_fast
+                    ma_slow_value = local_ma_slow
+            
+            rsi_value = df['RSI'].iloc[-1] if not df['RSI'].empty else 50  # Default RSI if not enough data
+            macd_value = df['MACD_line'].iloc[-1] if 'MACD_line' in df and not df['MACD_line'].empty else np.nan
+            macd_signal_value = df['MACD_signal'].iloc[-1] if 'MACD_signal' in df and not df['MACD_signal'].empty else np.nan
+            
+        except Exception as e:
+            print(f"Error calculating indicators: {e}")
+            rsi_value = 50  # Default RSI when calculation fails
+            macd_value = np.nan
+            macd_signal_value = np.nan
     else:
+        print(f"Not enough data for indicators. Required: {required_periods}, Available: {len(prices)}")
         rsi_value = 50  # Default RSI when not enough data
 
     # If we still don't have valid MA values, try Binance one more time
@@ -206,14 +238,17 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
     else:
         trend = "NEUTRAL"
 
+    # Trading signal logic with MACD confirmation
     if trend == "UPTREND" and rsi_value < rsi_oversold:
-        signal = "BUY"
+        if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value > macd_signal_value:
+            signal = "BUY"
     elif trend == "DOWNTREND" and rsi_value > rsi_overbought:
-        signal = "SELL"
+        if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value:
+            signal = "SELL"
     else:
         signal = "NEUTRAL"
 
-    return signal, trend, ma_fast_value, ma_slow_value
+    return signal, trend, ma_fast_value, ma_slow_value, rsi_value, macd_value, macd_signal_value
 
 
 def execute_trade(signal, current_price, usdc_balance, trump_balance):
@@ -230,7 +265,8 @@ def execute_trade(signal, current_price, usdc_balance, trump_balance):
                 "action": "BUY",
                 "price": current_price,
                 "quantity": trade_qty,
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "entry_timestamp": time.time() # Record entry timestamp
             }
             return "BUY", trade_qty, trade_details
         else:
@@ -245,7 +281,9 @@ def execute_trade(signal, current_price, usdc_balance, trump_balance):
                 "action": "SELL",
                 "price": current_price,
                 "quantity": trade_qty,
-                "timestamp": time.time()
+                "timestamp": time.time(),
+                "exit_timestamp": time.time(), # Record exit timestamp
+                "profit": 0.0 # Initialize profit, will be updated in update_balance
             }
             return "SELL", trade_qty, trade_details
         else:
@@ -255,27 +293,44 @@ def execute_trade(signal, current_price, usdc_balance, trump_balance):
 
 
 def update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details):
-    """Update USDC and TRUMP balances based on trade execution and record trade details."""
+    """Updates balances and trade history based on trade action."""
     if trade_action == "BUY":
-        trade_qty_usdc = trade_qty * current_price # Calculate USDC spent
-        if trade_qty_usdc > usdc_balance:
-            print(f"Error: Insufficient USDC balance for BUY order. Required: {trade_qty_usdc:.2f}, Available: {usdc_balance:.2f}")
-            return usdc_balance, trump_balance # No balance update
-        usdc_balance -= trade_qty_usdc
+        usdc_spent = trade_qty * current_price
+        usdc_balance -= usdc_spent
         trump_balance += trade_qty
-        trade_details["usdc_spent"] = trade_qty_usdc # Record USDC spent
-    elif trade_action == "SELL":
-        trade_value_usdc = trade_qty * current_price # Calculate USDC gained
-        if trade_qty > trump_balance:
-            print(f"Error: Insufficient TRUMP balance for SELL order. Required: {trade_qty:.2f}, Available: {trump_balance:.2f}")
-            return usdc_balance, trump_balance # No balance update
-        usdc_balance += trade_value_usdc
-        trump_balance -= trade_qty
-        trade_details["usdc_gained"] = trade_value_usdc # Record USDC gained
+        trade_details["usdc_spent"] = usdc_spent # Log USDC spent in trade details
+        trade_details["trump_received"] = trade_qty # Log TRUMP received in trade details
+        trade_history.append(trade_details) # Append trade details to history
 
-    if trade_details: # Only add to history if trade was executed (trade_details is not empty)
-        trade_history.append(trade_details)
+    elif trade_action == "SELL":
+        usdc_gained = trade_qty * current_price
+        usdc_balance += usdc_gained
+        trump_balance -= trade_qty
+        trade_details["usdc_gained"] = usdc_gained # Log USDC gained in trade details
+        trade_details["trump_sold"] = trade_qty # Log TRUMP sold in trade details
+        buy_trade = find_corresponding_buy_trade(trade_details) # Find corresponding buy trade
+        if buy_trade:
+            profit = usdc_gained - buy_trade.get("usdc_spent", 0) # Calculate profit
+            trade_details["profit"] = profit # Store profit in sell trade details
+            buy_trade["profit"] = profit # Also update profit in the corresponding buy trade for reference
+            trade_details["entry_timestamp"] = buy_trade.get("entry_timestamp") # Copy entry timestamp from buy trade
+            trade_details["exit_timestamp"] = time.time() # Record exit timestamp
+        else:
+            trade_details["profit"] = 0.0 # If no corresponding buy trade found, set profit to 0
+            trade_details["exit_timestamp"] = time.time() # Record exit timestamp
+
+        trade_history.append(trade_details) # Append trade details to history
+
     return usdc_balance, trump_balance
+
+
+def find_corresponding_buy_trade(sell_trade):
+    """Finds the most recent corresponding BUY trade for a SELL trade (FIFO)."""
+    # Iterate through trade history in reverse to find the most recent buy trade without a profit yet
+    for trade in reversed(trade_history):
+        if trade["action"] == "BUY" and "profit" not in trade: # Find BUY trades without profit
+            return trade # Return the first such buy trade found
+    return None # Return None if no corresponding buy trade is found
 
 
 def evaluate_performance(initial_portfolio_value, current_portfolio_value):
@@ -381,13 +436,16 @@ def analyze_trends(time_series_data: Union[List[Tuple], pd.DataFrame], window_si
     return {"trends": trends}
 
 
-def calculate_additional_features(df, fast_ma_period, slow_ma_period, rsi_period):
-    """Calculate additional technical indicators."""
+def calculate_additional_features(df, fast_ma_period, slow_ma_period, rsi_period, macd_fast_period, macd_slow_period, macd_signal_period):
+    """Calculate additional technical indicators including MACD."""
     df['MA_fast'] = df['close'].rolling(window=fast_ma_period).mean()
     df['MA_slow'] = df['close'].rolling(window=slow_ma_period).mean()
-    df['RSI'] = calculate_rsi_pandas(df['close'], rsi_period) # Use pandas RSI
-    df['Price_Change'] = df['close'].pct_change() # Percentage price change
-    df.dropna(inplace=True) # Drop rows with NaN after feature calculation
+    df['RSI'] = calculate_rsi(df['close'], rsi_period)
+    df['Price_Change'] = df['close'].pct_change()
+    macd = ta.macd(df['close'], fast=macd_fast_period, slow=macd_slow_period, signal=macd_signal_period)
+    df['MACD_line'] = macd['MACD_12_26_9']
+    df['MACD_signal'] = macd['MACDh_12_26_9']
+    df.dropna(inplace=True)
     return df
 
 
@@ -406,40 +464,40 @@ def calculate_rsi_pandas(series, period=14):
 
 def prepare_training_data(df):
     """Prepare data for training the ML model. (Simplified labeling for example)"""
-    df['Signal'] = 0  # 0: NEUTRAL
+    df['Signal'] = 0
     # Simplified signal logic: Use only MA crossover for training data generation
-    df.loc[df['MA_fast'] > df['MA_slow'], 'Signal'] = 1  # BUY if fast MA is above slow MA
-    df.loc[df['MA_fast'] < df['MA_slow'], 'Signal'] = -1 # SELL if fast MA is below slow MA
-    df.dropna(inplace=True) # Ensure no NaNs after signal generation
-    X = df[['MA_fast', 'MA_slow', 'RSI', 'Price_Change']] # Features
-    y = df['Signal'] # Target variable (BUY, SELL, NEUTRAL)
+    df.loc[df['MA_fast'] > df['MA_slow'], 'Signal'] = 1
+    df.loc[df['MA_fast'] < df['MA_slow'], 'Signal'] = -1
+    df.dropna(inplace=True)
+    X = df[['MA_fast', 'MA_slow', 'RSI', 'Price_Change', 'MACD_line', 'MACD_signal']]
+    y = df['Signal']
 
     # --- Debugging: Print signal distribution ---
     print("Signal distribution in training data:")
     print(y.value_counts())
     # --- End debugging ---
-    return train_test_split(X, y, test_size=0.2, random_state=42) # 80% train, 20% test
+    return train_test_split(X, y, test_size=0.2, random_state=42)
 
 
 def train_model(X_train, y_train):
     """Train a Logistic Regression model."""
-    model = LogisticRegression(random_state=42, max_iter=1000) # Increased max_iter for convergence
+    model = LogisticRegression(random_state=42, max_iter=1000)
     try:
         model.fit(X_train, y_train)
         return model
     except Exception as e:
         print(f"Error training ML model: {e}")
-        return None # Indicate model training failure
+        return None
 
 
 def predict_signal(model, features):
     """Predict trading signal using the trained model."""
-    if model is None: # Check if model is valid
+    if model is None:
         print("Warning: ML model is not trained or failed to train. Returning NEUTRAL signal.")
         return "NEUTRAL"
 
     # Ensure features are in DataFrame format as expected by the model
-    features_df = pd.DataFrame([features], columns=['MA_fast', 'MA_slow', 'RSI', 'Price_Change'])
+    features_df = pd.DataFrame([features], columns=['MA_fast', 'MA_slow', 'RSI', 'Price_Change', 'MACD_line', 'MACD_signal'])
     try:
         prediction = model.predict(features_df)
         # Convert prediction to trading signal string
@@ -451,33 +509,32 @@ def predict_signal(model, features):
             return "NEUTRAL"
     except Exception as e:
         print(f"Error during ML model prediction: {e}")
-        return "NEUTRAL" # Return NEUTRAL in case of prediction error
+        return "NEUTRAL"
 
 
 def signal_handler(sig, frame):
     """Handles SIGINT signal (CTRL+C)."""
-    global trading_enabled, model # Make 'model' global so we can access it
+    global trading_enabled, model
     print('\nCTRL+C detected. Gracefully exiting...')
-    trading_enabled = False # Stop the trading loop
+    trading_enabled = False
     # Perform any cleanup actions here if needed (e.g., close connections, save state)
 
     # Save the trained model before exiting
-    if model: # Check if model is trained before saving
+    if model:
         print("Saving trained ML model...")
         try:
-            dump(model, 'trading_model.joblib') # Save model to a file
+            dump(model, 'trading_model.joblib')
             print("ML model saved successfully to trading_model.joblib")
         except Exception as e:
             print(f"Error saving ML model: {e}")
 
 
-def log_data(log_file, log_message_dict): # Function now handles both list and dict
+def log_data(log_file, log_message_dict):
     """Logs trading data to a CSV file."""
     try:
         with open(log_file, mode='a', newline='') as csvfile:
             log_writer = csv.writer(csvfile)
-            if isinstance(log_message_dict, dict): # Check if log_message_dict is a dictionary
-                # Log regular data rows (dictionary)
+            if isinstance(log_message_dict, dict):
                 log_writer.writerow([
                     log_message_dict.get("Timestamp", ""),
                     log_message_dict.get("Iteration", ""),
@@ -495,12 +552,15 @@ def log_data(log_file, log_message_dict): # Function now handles both list and d
                     log_message_dict.get("RSI_Oversold", ""),
                     log_message_dict.get("MA_Fast", ""),
                     log_message_dict.get("MA_Slow", ""),
+                    log_message_dict.get("Win_Rate", ""),
+                    log_message_dict.get("Avg_Trade_Duration", ""),
+                    log_message_dict.get("MACD_Line", ""),
+                    log_message_dict.get("MACD_Signal", "")
                 ])
-            elif isinstance(log_message_dict, list): # Handle parameter adjustment rows (list)
-                # Log parameter adjustment rows (list) directly
+            elif isinstance(log_message_dict, list):
                 log_writer.writerow(log_message_dict)
             else:
-                print(f"Warning: log_message is not a dict or list, but: {type(log_message_dict)}") # Warning for unexpected type
+                print(f"Warning: log_message is not a dict or list, but: {type(log_message_dict)}")
 
     except Exception as e:
         print(f"Error in log_data: {e}")
@@ -508,17 +568,26 @@ def log_data(log_file, log_message_dict): # Function now handles both list and d
 
 def prepare_log_message(current_time_str, iteration, current_price, signal, trend, usdc_balance, trump_balance, current_portfolio_value, performance_percent, trade_action, trade_qty, trade_details, current_strategy_params, ma_fast, ma_slow):
     """Prepares the log message as a dictionary."""
-    try: # Add try-except block
+    try:
+        # Format numeric values only if they're not strings or "-"
+        usdc_balance_str = f"{usdc_balance:.2f}" if not isinstance(usdc_balance, str) else usdc_balance
+        trump_balance_str = f"{trump_balance:.2f}" if not isinstance(trump_balance, str) else trump_balance
+        portfolio_value_str = f"{current_portfolio_value:.2f}" if not isinstance(current_portfolio_value, str) else current_portfolio_value
+        performance_percent_str = f"{performance_percent:.2f}" if not isinstance(performance_percent, str) else performance_percent
+
+        # Check if trade_details is a dictionary, if not use empty string
+        trade_details = trade_details if isinstance(trade_details, dict) else {}
+
         log_message_dict = {
             "Timestamp": current_time_str,
             "Iteration": iteration,
             "Price": current_price,
             "Signal": signal,
             "Trend": trend,
-            "USDC_Balance": f"{usdc_balance:.2f}",
-            "TRUMP_Balance": f"{trump_balance:.2f}",
-            "Portfolio_Value": f"{current_portfolio_value:.2f}",
-            "P/L_Percent": f"{performance_percent:.2f}",
+            "USDC_Balance": usdc_balance_str,
+            "TRUMP_Balance": trump_balance_str,
+            "Portfolio_Value": portfolio_value_str,
+            "P/L_Percent": performance_percent_str,
             "Trade_Action": trade_action,
             "Trade_Quantity": trade_qty,
             "Trade_Price": trade_details.get("price", ""),
@@ -526,23 +595,49 @@ def prepare_log_message(current_time_str, iteration, current_price, signal, tren
             "RSI_Oversold": current_strategy_params.get("RSI_OVERSOLD", "KEY_ERROR"),
             "MA_Fast": ma_fast,
             "MA_Slow": ma_slow,
+            "Win_Rate": "n/a",
+            "Avg_Trade_Duration": "n/a",
+            "MACD_Line": trade_details.get("macd_line", "n/a"),
+            "MACD_Signal": trade_details.get("macd_signal", "n/a")
         }
         return log_message_dict
-    except Exception as e: # Catch any exception
-        print(f"Error in prepare_log_message: {e}") # Log the error
-        return {} # Return an empty dictionary in case of error
+    except Exception as e:
+        print(f"Error in prepare_log_message: {e}")
+        # Return a safe default dictionary with all string values
+        return {
+            "Timestamp": str(current_time_str),
+            "Iteration": str(iteration),
+            "Price": str(current_price),
+            "Signal": str(signal),
+            "Trend": str(trend),
+            "USDC_Balance": str(usdc_balance),
+            "TRUMP_Balance": str(trump_balance),
+            "Portfolio_Value": str(current_portfolio_value),
+            "P/L_Percent": str(performance_percent),
+            "Trade_Action": str(trade_action),
+            "Trade_Quantity": str(trade_qty),
+            "Trade_Price": "",  # Empty string for trade price when trade_details is not a dict
+            "RSI_Overbought": str(current_strategy_params.get("RSI_OVERBOUGHT", "KEY_ERROR")),
+            "RSI_Oversold": str(current_strategy_params.get("RSI_OVERSOLD", "KEY_ERROR")),
+            "MA_Fast": str(ma_fast),
+            "MA_Slow": str(ma_slow),
+            "Win_Rate": "n/a",
+            "Avg_Trade_Duration": "n/a",
+            "MACD_Line": "n/a",  # Default value when trade_details is not a dict
+            "MACD_Signal": "n/a"  # Default value when trade_details is not a dict
+        }
 
 
 def main():
-    global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled, trade_history, last_performance_iteration, prices_history, model # Make 'model' global
+    global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled, trade_history, last_performance_iteration, prices_history, model
 
-    import signal # TRY IMPORTING SIGNAL AGAIN INSIDE MAIN - FOR TESTING
+    import signal
 
-    if not initialize_client(): # Initialize client and check for success
+    if not initialize_client():
         print("Failed to initialize Binance client. Exiting.")
         return
 
-    signal.signal(signal.SIGINT, signal_handler) # Register signal handler for CTRL+C
+    signal.signal(signal.SIGINT, signal_handler)
 
     initial_trump_qty = calculate_initial_trump_quantity(INITIAL_TRUMP_USDC_VALUE)
 
@@ -552,63 +647,67 @@ def main():
 
     usdc_balance = INITIAL_USDC
     trump_balance = initial_trump_qty
-    prices_history = pd.DataFrame(columns=['timestamp', 'close'])  # Initialize as DataFrame with correct columns
+    prices_history = pd.DataFrame(columns=['timestamp', 'close'])
     initial_portfolio_value = INITIAL_USDC + INITIAL_TRUMP_USDC_VALUE
-    benchmark_portfolio_value_history = [] # NEW: History for benchmark portfolio value - ADDED HERE
+    benchmark_portfolio_value_history = []
 
     initial_strategy_params = load_strategy_params()
-    current_strategy_params = initial_strategy_params.copy() # Use .copy() to avoid modifying initial params
+    current_strategy_params = initial_strategy_params.copy()
     print(f"Debug: Loaded strategy parameters: {current_strategy_params}")
-    print(f"Debug: id(current_strategy_params) after load = {id(current_strategy_params)}") # Debug: ID after load
+    print(f"Debug: id(current_strategy_params) after load = {id(current_strategy_params)}")
     print(f"Debug: current_strategy_params after load_strategy_params: {current_strategy_params}")
     print(f"Initial strategy parameters: {initial_strategy_params}")
 
-    # --- ML Model Training ---
     print("Fetching historical data for model training...")
-    historical_df = fetch_binance_data(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=10000) # Fetch TRUMPUSDC, increased limit to 10000
-    model = None # Initialize model to None
+    historical_df = fetch_binance_data(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=10000)
+    model = None
 
-    # Try to load pre-trained model
     print("Checking for saved ML model...")
     try:
-        model = load('trading_model.joblib') # Load model if file exists
+        model = load('trading_model.joblib')
         print("Pre-trained ML model loaded successfully from trading_model.joblib")
     except FileNotFoundError:
         print("No saved ML model found. Training new model.")
         if historical_df is None or historical_df.empty:
             print("Failed to fetch historical data for training. Exiting ML training.")
-            model = None # No model will be used
+            model = None
         else:
             historical_df = calculate_additional_features(
                 historical_df.copy(),
                 current_strategy_params["FAST_MA_PERIOD"],
                 current_strategy_params["SLOW_MA_PERIOD"],
-                current_strategy_params["RSI_PERIOD"]
-            ) # Calculate features for historical data
+                current_strategy_params["RSI_PERIOD"],
+                current_strategy_params["MACD_FAST_PERIOD"],
+                current_strategy_params["MACD_SLOW_PERIOD"],
+                current_strategy_params["MACD_SIGNAL_PERIOD"]
+            )
             X_train, X_test, y_train, y_test = prepare_training_data(historical_df)
-            model = train_model(X_train, y_train) # Train model and handle potential failure
-            if model is not None: # Only evaluate and print accuracy if model training was successful
+            model = train_model(X_train, y_train)
+            if model is not None:
                 y_pred = model.predict(X_test)
                 accuracy = accuracy_score(y_test, y_pred)
                 print(f"Model trained. Accuracy on test set: {accuracy:.2f}")
             else:
                 print("ML model training failed. Trading will proceed without ML.")
-    except Exception as e: # Catch other potential errors during loading
+    except Exception as e:
         print(f"Error loading pre-trained ML model: {e}. Training new model.")
-        model = None # Ensure model is None in case of loading error
+        model = None
         if historical_df is None or historical_df.empty:
             print("Failed to fetch historical data for training. Exiting ML training.")
-            model = None # No model will be used
+            model = None
         else:
             historical_df = calculate_additional_features(
                 historical_df.copy(),
                 current_strategy_params["FAST_MA_PERIOD"],
                 current_strategy_params["SLOW_MA_PERIOD"],
-                current_strategy_params["RSI_PERIOD"]
-            ) # Calculate features for historical data
+                current_strategy_params["RSI_PERIOD"],
+                current_strategy_params["MACD_FAST_PERIOD"],
+                current_strategy_params["MACD_SLOW_PERIOD"],
+                current_strategy_params["MACD_SIGNAL_PERIOD"]
+            )
             X_train, X_test, y_train, y_test = prepare_training_data(historical_df)
-            model = train_model(X_train, y_train) # Train model and handle potential failure
-            if model is not None: # Only evaluate and print accuracy if model training was successful
+            model = train_model(X_train, y_train)
+            if model is not None:
                 y_pred = model.predict(X_test)
                 accuracy = accuracy_score(y_test, y_pred)
                 print(f"Model trained. Accuracy on test set: {accuracy:.2f}")
@@ -616,22 +715,27 @@ def main():
                 print("ML model training failed. Trading will proceed without ML.")
 
     iteration = 0
-    log_file = "trading_log.csv" # Define log file name
-    
-    # Only create header if file doesn't exist
+    log_file = "trading_log.csv"
+
+    # Remove the code that deletes the existing file
+    # Instead, only create the file with headers if it doesn't exist
     if not os.path.exists(log_file):
         with open(log_file, mode='w', newline='') as csvfile:
             log_writer = csv.writer(csvfile)
-            log_writer.writerow(['Timestamp', 'Iteration', 'Price', 'Signal', 'Trend', 'USDC_Balance', 'TRUMP_Balance', 'Portfolio_Value', 'P/L_Percent', 'Trade_Action', 'Trade_Quantity', 'Trade_Price', 'RSI_Overbought', 'RSI_Oversold', 'MA_Fast', 'MA_Slow'])
+            log_writer.writerow(['Timestamp', 'Iteration', 'Price', 'Signal', 'Trend', 'USDC_Balance', 'TRUMP_Balance', 
+                               'Portfolio_Value', 'P/L_Percent', 'Trade_Action', 'Trade_Quantity', 'Trade_Price', 
+                               'RSI_Overbought', 'RSI_Oversold', 'MA_Fast', 'MA_Slow', 'Win_Rate', 'Avg_Trade_Duration', 
+                               'MACD_Line', 'MACD_Signal'])
+        print(f"Created new log file: {log_file}")
+    else:
+        print(f"Appending to existing log file: {log_file}")
 
-
-    while trading_enabled: # Run as long as trading is enabled (can be stopped by CTRL+C)
+    while trading_enabled:
         iteration += 1
         timestamp_now = time.time()
         current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp_now))
         print(f"\n--- Iteration {iteration} - {current_time_str} ---")
 
-        # Initialize variables with default values
         signal = "NEUTRAL"
         trend = "NEUTRAL"
         trade_action = "NEUTRAL"
@@ -639,64 +743,76 @@ def main():
         trade_details = {}
         ma_fast = np.nan
         ma_slow = np.nan
+        rsi_value = np.nan
+        macd_value = np.nan
+        macd_signal_value = np.nan
 
         current_price = fetch_current_price(SYMBOL)
         if current_price is not None:
             current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
             new_row = pd.DataFrame([{'timestamp': current_time_str, 'close': current_price}])
-            prices_history = pd.concat([prices_history, new_row], ignore_index=True) # Use pd.concat to append
+            prices_history = pd.concat([prices_history, new_row], ignore_index=True)
 
-            if len(prices_history) > current_strategy_params["SLOW_MA_PERIOD"]: # Ensure enough data for indicators
-                signal, trend, ma_fast, ma_slow = generate_trading_signal(prices_history, current_strategy_params["FAST_MA_PERIOD"], current_strategy_params["SLOW_MA_PERIOD"], current_strategy_params["RSI_PERIOD"], current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"])
-                portfolio_value = usdc_balance + (trump_balance * current_price) # Portfolio value before trade
-                print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC")
+            if len(prices_history) > current_strategy_params["SLOW_MA_PERIOD"]:
+                signal, trend, ma_fast, ma_slow, rsi_value, macd_value, macd_signal_value = generate_trading_signal(
+                    prices_history,
+                    current_strategy_params["FAST_MA_PERIOD"],
+                    current_strategy_params["SLOW_MA_PERIOD"],
+                    current_strategy_params["RSI_PERIOD"],
+                    current_strategy_params["RSI_OVERBOUGHT"],
+                    current_strategy_params["RSI_OVERSOLD"],
+                    current_strategy_params["MACD_FAST_PERIOD"],
+                    current_strategy_params["MACD_SLOW_PERIOD"],
+                    current_strategy_params["MACD_SIGNAL_PERIOD"]
+                )
+                portfolio_value = usdc_balance + (trump_balance * current_price)
+                print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC, RSI: {rsi_value:.2f}, MACD: {macd_value:.4f}, MACD Signal: {macd_signal_value:.4f}")
 
-                trade_action, trade_qty, trade_details = execute_trade(signal, current_price, usdc_balance, trump_balance) # Capture trade_details
+                trade_action, trade_qty, trade_details = execute_trade(signal, current_price, usdc_balance, trump_balance)
                 if trade_action != "NEUTRAL":
-                    usdc_balance, trump_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details) # Pass trade_details
+                    usdc_balance, trump_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details)
+
+                trade_details["rsi_value"] = rsi_value
+                trade_details["macd_line"] = macd_value
+                trade_details["macd_signal"] = macd_signal_value
 
         current_portfolio_value = usdc_balance + (trump_balance * current_price)
         performance_percent = evaluate_performance(initial_portfolio_value, current_portfolio_value)
 
         print(f"USDC Balance: {usdc_balance:.2f}, TRUMP Balance: {trump_balance:.2f}, Portfolio Value: {current_portfolio_value:.2f} USDC, P/L: {performance_percent:.2f}%  |  Current Price: {current_price:.2f}")
 
-        historical_performance.append(performance_percent) # Store performance history
+        historical_performance.append(performance_percent)
 
-        # --- Benchmark Portfolio Calculation ---
-        benchmark_portfolio_value = INITIAL_USDC + (initial_trump_qty * current_price) # Calculate benchmark value
-        benchmark_portfolio_value_history.append(benchmark_portfolio_value) # Store benchmark value - ADDED HERE
+        benchmark_portfolio_value = INITIAL_USDC + (initial_trump_qty * current_price)
+        benchmark_portfolio_value_history.append(benchmark_portfolio_value)
 
-        # Log data for each iteration
         log_message = prepare_log_message(current_time_str, iteration, current_price, signal, trend, usdc_balance, trump_balance, current_portfolio_value, performance_percent, trade_action, trade_qty, trade_details, current_strategy_params, ma_fast, ma_slow)
         log_data(log_file, log_message)
 
-        if iteration % 10 == 0: # Adjust parameters every 10 iterations
-            if len(historical_performance) >= 10: # Adjust based on last 10 iterations average performance
+        if iteration % 10 == 0:
+            if len(historical_performance) >= 10:
                 avg_performance = np.mean(historical_performance[-10:])
                 print(f"\n--- Performance Report for last 10 iterations ---")
                 print(f"Average Performance: {avg_performance:.2f}%")
 
-                # --- Benchmark Performance Calculation ---
-                if len(benchmark_portfolio_value_history) >= 11: # CHECK FOR >= 11 HERE
-                    initial_benchmark_value_period = benchmark_portfolio_value_history[-11] # Value 10 iterations ago
-                    current_benchmark_value = benchmark_portfolio_value_history[-1] # Current benchmark value
-                    benchmark_performance_percent = ((current_benchmark_value - initial_benchmark_value_period) / initial_benchmark_value_period) * 100 # Benchmark performance over last 10 iterations
+                if len(benchmark_portfolio_value_history) >= 11:
+                    initial_benchmark_value_period = benchmark_portfolio_value_history[-11]
+                    current_benchmark_value = benchmark_portfolio_value_history[-1]
+                    benchmark_performance_percent = ((current_benchmark_value - initial_benchmark_value_period) / initial_benchmark_value_period) * 100
                 else:
-                    benchmark_performance_percent = 0.0 # Not enough data yet
+                    benchmark_performance_percent = 0.0
 
-                print(f"Benchmark Performance (last 10 iters): {benchmark_performance_percent:.2f}%") # Print benchmark performance - ADDED HERE
-                performance_vs_benchmark = avg_performance - benchmark_performance_percent # Calculate difference - ADDED HERE
-                print(f"Strategy vs. Benchmark: {performance_vs_benchmark:.2f}%") # Print difference - ADDED HERE
+                print(f"Benchmark Performance (last 10 iters): {benchmark_performance_percent:.2f}%")
+                performance_vs_benchmark = avg_performance - benchmark_performance_percent
+                print(f"Strategy vs. Benchmark: {performance_vs_benchmark:.2f}%")
 
-
-                # --- Trade Summary ---
-                recent_trades = trade_history[last_performance_iteration:] # Trades since last report
+                recent_trades = trade_history[last_performance_iteration:]
                 buy_orders = [trade for trade in recent_trades if trade["action"] == "BUY"]
                 sell_orders = [trade for trade in recent_trades if trade["action"] == "SELL"]
 
-                buy_value = sum([trade.get("usdc_spent", 0) for trade in buy_orders]) # Total spent on buys
-                sell_value = sum([trade.get("usdc_gained", 0) for trade in sell_orders]) # Total gained from sells
-                net_profit_trades = sell_value - buy_value # Net profit from trades
+                buy_value = sum([trade.get("usdc_spent", 0) for trade in buy_orders])
+                sell_value = sum([trade.get("usdc_gained", 0) for trade in sell_orders])
+                net_profit_trades = sell_value - buy_value
 
                 num_buy_orders = len(buy_orders)
                 num_sell_orders = len(sell_orders)
@@ -707,16 +823,32 @@ def main():
                 print(f"  SELL Orders: {num_sell_orders}")
                 print(f"  Net Profit from Trades (approx): {net_profit_trades:.2f} USDC")
 
+                closed_trades = [trade for trade in recent_trades if "profit" in trade]
+                winning_trades = [trade for trade in closed_trades if trade.get("profit", 0) > 0]
+                num_closed_trades = len(closed_trades)
+                num_winning_trades = len(winning_trades)
+                win_rate = (num_winning_trades / num_closed_trades) * 100 if num_closed_trades > 0 else 0.0
+
+                trade_durations = [trade.get("exit_timestamp", 0) - trade.get("entry_timestamp", 0) for trade in closed_trades if "entry_timestamp" in trade and "exit_timestamp" in trade and trade.get("entry_timestamp", 0) > 0]
+                avg_trade_duration_sec = np.mean(trade_durations) if trade_durations else 0
+                avg_trade_duration_min = avg_trade_duration_sec / 60
+
+                print(f"  Win Rate: {win_rate:.2f}%")
+                print(f"  Avg Trade Duration: {avg_trade_duration_min:.2f} minutes")
+
                 current_strategy_params = adjust_strategy_parameters(avg_performance, current_strategy_params)
 
-                # Log parameter adjustments
-                log_message_params_adjust = [current_time_str, iteration, "-", "PARAMS_ADJUST", "-", "-", "-", "-", "-", "-", "-", current_strategy_params.get("RSI_OVERBOUGHT", "KEY_ERROR"), current_strategy_params.get("RSI_OVERSOLD", "KEY_ERROR")]
+                log_message_params_adjust = [current_time_str, iteration, "-", "PARAMS_ADJUST", "-", "-", "-", "-", "-", "-", "-", current_strategy_params.get("RSI_OVERBOUGHT", "KEY_ERROR"), current_strategy_params.get("RSI_OVERSOLD", "KEY_ERROR"), win_rate, avg_trade_duration_min]
                 log_data(log_file, log_message_params_adjust)
 
+                log_message_performance_report = prepare_log_message(current_time_str, iteration, "-", "REPORT", "-", "-", "-", "-", avg_performance, "-", "-", "-", current_strategy_params, "n/a", "n/a")
+                log_message_performance_report["Win_Rate"] = f"{win_rate:.2f}%"
+                log_message_performance_report["Avg_Trade_Duration"] = f"{avg_trade_duration_min:.2f} min"
+                log_data(log_file, log_message_performance_report)
 
-                last_performance_iteration = len(trade_history) # Update last iteration index
+                last_performance_iteration = len(trade_history)
 
-        time.sleep(10) # Check price every 10 seconds
+        time.sleep(10)
 
 
 def load_strategy_params():
@@ -736,14 +868,13 @@ def load_strategy_params():
         'TAKE_PROFIT_PERCENT': TAKE_PROFIT_PERCENT_DEFAULT,
         'TRADE_RISK_PERCENT': TRADE_RISK_PERCENT_DEFAULT
     }
-    print(f"Debug: params dictionary inside load_strategy_params: {params}") # Debug print here
+    print(f"Debug: params dictionary inside load_strategy_params: {params}")
 
-    # Override defaults with environment variables if set
     for key in params:
         env_var_value = os.environ.get(key)
         if env_var_value is not None:
             try:
-                params[key] = type(params[key])(env_var_value) # Attempt to cast to default type
+                params[key] = type(params[key])(env_var_value)
             except ValueError:
                 print(f"Warning: Invalid value '{env_var_value}' for env var '{key}', using default value: {params[key]}")
             except TypeError:
