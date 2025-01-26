@@ -10,8 +10,6 @@ from typing import List, Tuple, Union
 from sklearn.linear_model import LogisticRegression # Example ML model
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
-import csv # Import the csv module for logging
-from joblib import dump, load # Import joblib for saving/loading the model
 
 print("Signal module imported successfully:", 'signal' in globals()) # Check if signal is imported
 print("TA-Lib module imported successfully:", 'ta' in globals())
@@ -21,10 +19,10 @@ print("TA-Lib module imported successfully:", 'ta' in globals())
 # --- Configuration ---
 API_KEY = os.environ.get('binance_api')
 API_SECRET = os.environ.get('binance_secret')
-SYMBOL_raw = os.environ.get("SYMBOL", "TRUMPUSDC")  # Default to "TRUMPUSDC" if not set (still with space for now, corrected below)
+SYMBOL_raw = os.environ.get("SYMBOL", "RUNEUSDT")  # Default to "RUNEUSDT" if not set (still with space for now, corrected below)
 SYMBOL = SYMBOL_raw.strip() # Remove leading/trailing whitespace, important for API calls
 INITIAL_USDC = 500
-INITIAL_TRUMP_USDC_VALUE = 500
+INITIAL_RUNE_USDC_VALUE = 500
 MIN_TRADE_USDC = 1.2
 
 # --- Strategy Parameters (Initial & Adjustable) ---
@@ -44,7 +42,7 @@ TRADE_RISK_PERCENT_DEFAULT = 0.01 # Risk 1% of portfolio per trade
 
 # --- Global Variables ---
 client = None
-initial_trump_qty = 0.0
+initial_rune_qty = 0.0
 current_strategy_params = {}
 historical_performance = []
 trading_enabled = True # Flag for trading loop - initialize here
@@ -100,8 +98,8 @@ def fetch_current_price(symbol):
         return None
 
 
-def calculate_initial_trump_quantity(initial_usdc_value):
-    """Calculate initial TRUMP quantity based on current price."""
+def calculate_initial_rune_quantity(initial_usdc_value):
+    """Calculate initial RUNE quantity based on current price."""
     current_price = fetch_current_price(SYMBOL)
     if current_price:
         return initial_usdc_value / current_price
@@ -160,7 +158,7 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
         return "NEUTRAL"
 
 
-def execute_trade(signal, current_price, usdc_balance, trump_balance):
+def execute_trade(signal, current_price, usdc_balance, rune_balance):
     """Simulate trade execution."""
     trade_qty = 0.0
     trade_details = {} # Dictionary to store trade details
@@ -182,7 +180,7 @@ def execute_trade(signal, current_price, usdc_balance, trump_balance):
             return "NEUTRAL", 0.0, trade_details # Return empty trade_details
 
     elif signal == "SELL":
-        trade_qty = trump_balance
+        trade_qty = rune_balance
         if trade_qty * current_price > MIN_TRADE_USDC:
             print(f"SELL {SYMBOL}: Quantity: {trade_qty:.2f}, Price: {current_price}")
             trade_details = {
@@ -193,33 +191,33 @@ def execute_trade(signal, current_price, usdc_balance, trump_balance):
             }
             return "SELL", trade_qty, trade_details
         else:
-            print(f"SELL signal, but trade value below minimum. TRUMP balance value: {trump_balance * current_price}")
+            print(f"SELL signal, but trade value below minimum. RUNE balance value: {rune_balance * current_price}")
             return "NEUTRAL", 0.0, trade_details # Return empty trade_details
     return "NEUTRAL", 0.0, trade_details # Return empty trade_details
 
 
-def update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details):
-    """Update USDC and TRUMP balances based on trade execution and record trade details."""
+def update_balance(trade_action, trade_qty, current_price, usdc_balance, rune_balance, trade_details):
+    """Update USDC and RUNE balances based on trade execution and record trade details."""
     if trade_action == "BUY":
         trade_qty_usdc = trade_qty * current_price # Calculate USDC spent
         if trade_qty_usdc > usdc_balance:
             print(f"Error: Insufficient USDC balance for BUY order. Required: {trade_qty_usdc:.2f}, Available: {usdc_balance:.2f}")
-            return usdc_balance, trump_balance # No balance update
+            return usdc_balance, rune_balance # No balance update
         usdc_balance -= trade_qty_usdc
-        trump_balance += trade_qty
+        rune_balance += trade_qty
         trade_details["usdc_spent"] = trade_qty_usdc # Record USDC spent
     elif trade_action == "SELL":
         trade_value_usdc = trade_qty * current_price # Calculate USDC gained
-        if trade_qty > trump_balance:
-            print(f"Error: Insufficient TRUMP balance for SELL order. Required: {trade_qty:.2f}, Available: {trump_balance:.2f}")
-            return usdc_balance, trump_balance # No balance update
+        if trade_qty > rune_balance:
+            print(f"Error: Insufficient RUNE balance for SELL order. Required: {trade_qty:.2f}, Available: {rune_balance:.2f}")
+            return usdc_balance, rune_balance # No balance update
         usdc_balance += trade_value_usdc
-        trump_balance -= trade_qty
+        rune_balance -= trade_qty
         trade_details["usdc_gained"] = trade_value_usdc # Record USDC gained
 
     if trade_details: # Only add to history if trade was executed (trade_details is not empty)
         trade_history.append(trade_details)
-    return usdc_balance, trump_balance
+    return usdc_balance, rune_balance
 
 
 def evaluate_performance(initial_portfolio_value, current_portfolio_value):
@@ -400,30 +398,14 @@ def predict_signal(model, features):
 
 def signal_handler(sig, frame):
     """Handles SIGINT signal (CTRL+C)."""
-    global trading_enabled, model # Make 'model' global so we can access it
+    global trading_enabled
     print('\nCTRL+C detected. Gracefully exiting...')
     trading_enabled = False # Stop the trading loop
     # Perform any cleanup actions here if needed (e.g., close connections, save state)
 
-    # Save the trained model before exiting
-    if model: # Check if model is trained before saving
-        print("Saving trained ML model...")
-        try:
-            dump(model, 'trading_model.joblib') # Save model to a file
-            print("ML model saved successfully to trading_model.joblib")
-        except Exception as e:
-            print(f"Error saving ML model: {e}")
-
-
-def log_data(log_file, log_message):
-    """Logs data to a CSV file."""
-    with open(log_file, mode='a', newline='') as csvfile:
-        log_writer = csv.writer(csvfile)
-        log_writer.writerow(log_message)
-
 
 def main():
-    global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled, trade_history, last_performance_iteration, prices_history, model # Make 'model' global
+    global initial_rune_qty, current_strategy_params, historical_performance, trading_enabled, trade_history, last_performance_iteration, prices_history
 
     import signal # TRY IMPORTING SIGNAL AGAIN INSIDE MAIN - FOR TESTING
 
@@ -433,17 +415,16 @@ def main():
 
     signal.signal(signal.SIGINT, signal_handler) # Register signal handler for CTRL+C
 
-    initial_trump_qty = calculate_initial_trump_quantity(INITIAL_TRUMP_USDC_VALUE)
+    initial_rune_qty = calculate_initial_rune_quantity(INITIAL_RUNE_USDC_VALUE)
 
-    if initial_trump_qty == 0.0:
-        print("Could not fetch initial TRUMP price. Exiting.")
+    if initial_rune_qty == 0.0:
+        print("Could not fetch initial RUNE price. Exiting.")
         return
 
     usdc_balance = INITIAL_USDC
-    trump_balance = initial_trump_qty
+    rune_balance = initial_rune_qty
     prices_history = []
-    initial_portfolio_value = INITIAL_USDC + INITIAL_TRUMP_USDC_VALUE
-    benchmark_portfolio_value_history = [] # NEW: History for benchmark portfolio value - ADDED HERE
+    initial_portfolio_value = INITIAL_USDC + INITIAL_RUNE_USDC_VALUE
 
     current_strategy_params = {}
     current_strategy_params = load_strategy_params()
@@ -452,70 +433,32 @@ def main():
 
     # --- ML Model Training ---
     print("Fetching historical data for model training...")
-    historical_df = fetch_binance_data(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=10000) # Fetch TRUMPUSDC, increased limit to 10000
+    historical_df = fetch_binance_data(symbol=SYMBOL, interval=Client.KLINE_INTERVAL_1HOUR, limit=10000) # Fetch RUNEUSDC, increased limit to 10000
     model = None # Initialize model to None
-
-    # Try to load pre-trained model
-    print("Checking for saved ML model...")
-    try:
-        model = load('trading_model.joblib') # Load model if file exists
-        print("Pre-trained ML model loaded successfully from trading_model.joblib")
-    except FileNotFoundError:
-        print("No saved ML model found. Training new model.")
-        if historical_df is None or historical_df.empty:
-            print("Failed to fetch historical data for training. Exiting ML training.")
-            model = None # No model will be used
+    if historical_df is None or historical_df.empty:
+        print("Failed to fetch historical data for training. Exiting ML training.")
+        model = None # No model will be used
+    else:
+        historical_df = calculate_additional_features(
+            historical_df.copy(),
+            current_strategy_params["FAST_MA_PERIOD"],
+            current_strategy_params["SLOW_MA_PERIOD"],
+            current_strategy_params["RSI_PERIOD"]
+        ) # Calculate features for historical data
+        X_train, X_test, y_train, y_test = prepare_training_data(historical_df)
+        model = train_model(X_train, y_train) # Train model and handle potential failure
+        if model is not None: # Only evaluate and print accuracy if model training was successful
+            y_pred = model.predict(X_test)
+            accuracy = accuracy_score(y_test, y_pred)
+            print(f"Model trained. Accuracy on test set: {accuracy:.2f}")
         else:
-            historical_df = calculate_additional_features(
-                historical_df.copy(),
-                current_strategy_params["FAST_MA_PERIOD"],
-                current_strategy_params["SLOW_MA_PERIOD"],
-                current_strategy_params["RSI_PERIOD"]
-            ) # Calculate features for historical data
-            X_train, X_test, y_train, y_test = prepare_training_data(historical_df)
-            model = train_model(X_train, y_train) # Train model and handle potential failure
-            if model is not None: # Only evaluate and print accuracy if model training was successful
-                y_pred = model.predict(X_test)
-                accuracy = accuracy_score(y_test, y_pred)
-                print(f"Model trained. Accuracy on test set: {accuracy:.2f}")
-            else:
-                print("ML model training failed. Trading will proceed without ML.")
-    except Exception as e: # Catch other potential errors during loading
-        print(f"Error loading pre-trained ML model: {e}. Training new model.")
-        model = None # Ensure model is None in case of loading error
-        if historical_df is None or historical_df.empty:
-            print("Failed to fetch historical data for training. Exiting ML training.")
-            model = None # No model will be used
-        else:
-            historical_df = calculate_additional_features(
-                historical_df.copy(),
-                current_strategy_params["FAST_MA_PERIOD"],
-                current_strategy_params["SLOW_MA_PERIOD"],
-                current_strategy_params["RSI_PERIOD"]
-            ) # Calculate features for historical data
-            X_train, X_test, y_train, y_test = prepare_training_data(historical_df)
-            model = train_model(X_train, y_train) # Train model and handle potential failure
-            if model is not None: # Only evaluate and print accuracy if model training was successful
-                y_pred = model.predict(X_test)
-                accuracy = accuracy_score(y_test, y_pred)
-                print(f"Model trained. Accuracy on test set: {accuracy:.2f}")
-            else:
-                print("ML model training failed. Trading will proceed without ML.")
+            print("ML model training failed. Trading will proceed without ML.")
 
     iteration = 0
-    log_file = "trading_log.csv" # Define log file name
-    # Write CSV header
-    with open(log_file, mode='w', newline='') as csvfile:
-        log_writer = csv.writer(csvfile)
-        log_writer.writerow(['Timestamp', 'Iteration', 'Price', 'Signal', 'USDC_Balance', 'TRUMP_Balance', 'Portfolio_Value', 'P/L_Percent', 'Trade_Action', 'Trade_Quantity', 'Trade_Price', 'RSI_Overbought', 'RSI_Oversold'])
-
 
     while trading_enabled: # Run as long as trading is enabled (can be stopped by CTRL+C)
         iteration += 1
-        timestamp_now = time.time()
-        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp_now))
-        print(f"\n--- Iteration {iteration} - {current_time_str} ---")
-
+        print(f"\n--- Iteration {iteration} ---")
         current_price = fetch_current_price(SYMBOL)
         if not current_price:
             time.sleep(60) # Wait for 1 minute before retrying
@@ -523,36 +466,21 @@ def main():
 
         prices_history.append(current_price) # Append current price to history
 
-        signal = "NEUTRAL" # Initialize signal
-        trade_action = "NEUTRAL" # Initialize trade_action
-        trade_qty = 0.0
-        trade_details = {}
-
         if len(prices_history) > current_strategy_params["SLOW_MA_PERIOD"]: # Ensure enough data for indicators
             signal = generate_trading_signal(prices_history, current_strategy_params["FAST_MA_PERIOD"], current_strategy_params["SLOW_MA_PERIOD"], current_strategy_params["RSI_PERIOD"], current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"])
-            portfolio_value = usdc_balance + (trump_balance * current_price) # Portfolio value before trade
+            portfolio_value = usdc_balance + (rune_balance * current_price) # Portfolio value before trade
             print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC")
 
-            trade_action, trade_qty, trade_details = execute_trade(signal, current_price, usdc_balance, trump_balance) # Capture trade_details
+            trade_action, trade_qty, trade_details = execute_trade(signal, current_price, usdc_balance, rune_balance) # Capture trade_details
             if trade_action != "NEUTRAL":
-                usdc_balance, trump_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details) # Pass trade_details
+                usdc_balance, rune_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, rune_balance, trade_details) # Pass trade_details
 
-        current_portfolio_value = usdc_balance + (trump_balance * current_price)
+        current_portfolio_value = usdc_balance + (rune_balance * current_price)
         performance_percent = evaluate_performance(initial_portfolio_value, current_portfolio_value)
 
-        print(f"USDC Balance: {usdc_balance:.2f}, TRUMP Balance: {trump_balance:.2f}, Portfolio Value: {current_portfolio_value:.2f} USDC, P/L: {performance_percent:.2f}%  |  Current Price: {current_price:.2f}")
+        print(f"USDC Balance: {usdc_balance:.2f}, RUNE Balance: {rune_balance:.2f}, Portfolio Value: {current_portfolio_value:.2f} USDC, P/L: {performance_percent:.2f}%")
 
         historical_performance.append(performance_percent) # Store performance history
-
-        # --- Benchmark Portfolio Calculation ---
-        benchmark_portfolio_value = INITIAL_USDC + (initial_trump_qty * current_price) # Calculate benchmark value
-        benchmark_portfolio_value_history.append(benchmark_portfolio_value) # Store benchmark value - ADDED HERE
-
-        # Log data for each iteration
-        print(f"Debug: current_strategy_params before logging: {current_strategy_params}")
-        log_message = [current_time_str, iteration, current_price, signal, f"{usdc_balance:.2f}", f"{trump_balance:.2f}", f"{current_portfolio_value:.2f}", f"{performance_percent:.2f}", trade_action, trade_qty, trade_details.get("price", ""), current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"]] # Include RSI params in log
-        log_data(log_file, log_message)
-
 
         if iteration % 10 == 0: # Adjust parameters every 10 iterations
             if len(historical_performance) >= 10: # Adjust based on last 10 iterations average performance
@@ -560,44 +488,21 @@ def main():
                 print(f"\n--- Performance Report for last 10 iterations ---")
                 print(f"Average Performance: {avg_performance:.2f}%")
 
-                # --- Benchmark Performance Calculation ---
-                if len(benchmark_portfolio_value_history) >= 11: # CHECK FOR >= 11 HERE
-                    initial_benchmark_value_period = benchmark_portfolio_value_history[-11] # Value 10 iterations ago
-                    current_benchmark_value = benchmark_portfolio_value_history[-1] # Current benchmark value
-                    benchmark_performance_percent = ((current_benchmark_value - initial_benchmark_value_period) / initial_benchmark_value_period) * 100 # Benchmark performance over last 10 iterations
-                else:
-                    benchmark_performance_percent = 0.0 # Not enough data yet
-
-                print(f"Benchmark Performance (last 10 iters): {benchmark_performance_percent:.2f}%") # Print benchmark performance - ADDED HERE
-                performance_vs_benchmark = avg_performance - benchmark_performance_percent # Calculate difference - ADDED HERE
-                print(f"Strategy vs. Benchmark: {performance_vs_benchmark:.2f}%") # Print difference - ADDED HERE
-
-
                 # --- Trade Summary ---
                 recent_trades = trade_history[last_performance_iteration:] # Trades since last report
                 buy_orders = [trade for trade in recent_trades if trade["action"] == "BUY"]
                 sell_orders = [trade for trade in recent_trades if trade["action"] == "SELL"]
 
-                buy_value = sum([trade.get("usdc_spent", 0) for trade in buy_orders]) # Total spent on buys
-                sell_value = sum([trade.get("usdc_gained", 0) for trade in sell_orders]) # Total gained from sells
-                net_profit_trades = sell_value - buy_value # Net profit from trades
+                buy_profit = sum([trade.get("usdc_spent", 0) for trade in buy_orders]) # Sum of USDC spent on buys (cost)
+                sell_profit = sum([trade.get("usdc_gained", 0) for trade in sell_orders]) # Sum of USDC gained on sells (revenue)
+                net_profit_trades = sell_profit - buy_profit # Approximating profit from trades
 
-                num_buy_orders = len(buy_orders)
-                num_sell_orders = len(sell_orders)
-                total_trades = num_buy_orders + num_sell_orders
-
-                print(f"  Total Trades: {total_trades}")
-                print(f"  BUY Orders: {num_buy_orders}")
-                print(f"  SELL Orders: {num_sell_orders}")
-                print(f"  Net Profit from Trades (approx): {net_profit_trades:.2f} USDC")
+                print(f"Trades in this period:")
+                print(f"  BUY Orders: {len(buy_orders)}")
+                print(f"  SELL Orders: {len(sell_orders)}")
+                print(f"  Net Profit from Trades (approx): {net_profit_trades:.2f} USDC") # Approximated net profit
 
                 current_strategy_params = adjust_strategy_parameters(avg_performance, current_strategy_params)
-
-                # Log parameter adjustments
-                log_message_params_adjust = [current_time_str, iteration, "-", "PARAMS_ADJUST", "-", "-", "-", "-", "-", "-", "-", current_strategy_params["RSI_OVERBOUGHT"], current_strategy_params["RSI_OVERSOLD"]] # Log parameter adjustments
-                log_data(log_file, log_message_params_adjust)
-
-
                 last_performance_iteration = len(trade_history) # Update last iteration index
 
         time.sleep(10) # Check price every 10 seconds

@@ -12,3 +12,6 @@ pandas_ta>=0.3.14b
 scipy>=1.7.0 
 scikit-learn>=1.4.0
 pmdarima>=2.0.0
+joblib>=1.4.2
+
+matplotlib
