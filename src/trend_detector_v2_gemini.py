@@ -31,8 +31,8 @@ MIN_TRADE_USDC = 1.2
 FAST_MA_PERIOD_DEFAULT = 12
 SLOW_MA_PERIOD_DEFAULT = 26
 RSI_PERIOD_DEFAULT = 14
-RSI_OVERBOUGHT_DEFAULT = 65  # Adjusted RSI Overbought level to 65 - Lowered default for more BUY signals
-RSI_OVERSOLD_DEFAULT = 40   # Adjusted RSI Oversold level to 40 - Increased to trigger more BUY signals
+RSI_OVERBOUGHT_DEFAULT = 70  # Slightly Increased RSI Overbought for SELL - more conservative selling
+RSI_OVERSOLD_DEFAULT = 35   # Slightly Increased RSI Oversold for BUY - a bit less aggressive buying than before, but still more than original
 MACD_FAST_PERIOD_DEFAULT = 12
 MACD_SLOW_PERIOD_DEFAULT = 26
 MACD_SIGNAL_PERIOD_DEFAULT = 9
@@ -165,19 +165,20 @@ def fetch_ma_from_binance(symbol, interval="1m", fast_period=7, slow_period=25):
         return np.nan, np.nan
 
 
-def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, rsi_overbought, rsi_oversold, macd_fast_period, macd_slow_period, macd_signal_period):
+def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, rsi_overbought, rsi_oversold, macd_fast_period, macd_slow_period, macd_signal_period, previous_trend):
     """
-    Generates a trading signal based on Moving Averages, RSI, and MACD.
+    Generates a trading signal based on Moving Averages, RSI, and MACD, focusing on trend changes.
     Returns: signal, trend, ma_fast, ma_slow, rsi_value, macd_value, macd_signal_value
     """
     signal = "NEUTRAL"
     trend = "NEUTRAL"
     macd_value = np.nan
     macd_signal_value = np.nan
+    global current_time_str
 
     # First try to get MA values from Binance as a baseline
     ma_fast_value, ma_slow_value = fetch_ma_from_binance(SYMBOL)
-    
+
     # Try to calculate local indicators if we have enough data
     required_periods = max(slow_ma_period, macd_slow_period + macd_signal_period)
     if len(prices) > required_periods:
@@ -186,14 +187,14 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
             df['MA_fast'] = df['close'].rolling(window=fast_ma_period).mean()
             df['MA_slow'] = df['close'].rolling(window=slow_ma_period).mean()
             df['RSI'] = calculate_rsi_pandas(df['close'], rsi_period)
-            
+
             # Calculate MACD using pandas_ta
             try:
-                macd = ta.macd(df['close'], 
-                              fast=macd_fast_period, 
-                              slow=macd_slow_period, 
+                macd = ta.macd(df['close'],
+                              fast=macd_fast_period,
+                              slow=macd_slow_period,
                               signal=macd_signal_period)
-                
+
                 if macd is not None and not macd.empty:
                     df['MACD_line'] = macd[f'MACD_{macd_fast_period}_{macd_slow_period}_{macd_signal_period}']
                     df['MACD_signal'] = macd[f'MACDs_{macd_fast_period}_{macd_slow_period}_{macd_signal_period}']
@@ -204,7 +205,7 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
                 print(f"Error calculating MACD: {e}")
                 df['MACD_line'] = np.nan
                 df['MACD_signal'] = np.nan
-            
+
             # Get last values from local data if available
             if not df['MA_fast'].empty and not df['MA_slow'].empty:
                 local_ma_fast = df['MA_fast'].iloc[-1]
@@ -213,11 +214,11 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
                 if not np.isnan(local_ma_fast) and not np.isnan(local_ma_slow):
                     ma_fast_value = local_ma_fast
                     ma_slow_value = local_ma_slow
-            
+
             rsi_value = df['RSI'].iloc[-1] if not df['RSI'].empty else 50  # Default RSI if not enough data
             macd_value = df['MACD_line'].iloc[-1] if 'MACD_line' in df and not df['MACD_line'].empty else np.nan
             macd_signal_value = df['MACD_signal'].iloc[-1] if 'MACD_signal' in df and not df['MACD_signal'].empty else np.nan
-            
+
         except Exception as e:
             print(f"Error calculating indicators: {e}")
             rsi_value = 50  # Default RSI when calculation fails
@@ -227,7 +228,7 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
         print(f"Not enough data for indicators. Required: {required_periods}, Available: {len(prices)}")
         rsi_value = 50  # Default RSI when not enough data
 
-    rsi_overbought_buy = rsi_overbought # Use the general overbought parameter for BUY condition now - can be separated if needed later
+    rsi_overbought_buy = rsi_overbought # Use the general overbought parameter for BUY condition
     rsi_overbought_sell = rsi_overbought # Use the same overbought parameter for SELL condition
     rsi_oversold_level = rsi_oversold # Use the general oversold parameter
 
@@ -242,13 +243,16 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
     else:
         trend = "NEUTRAL"
 
-    # Trading signal logic with MACD confirmation
-    if trend == "UPTREND" and rsi_value < rsi_oversold_level: # Use rsi_oversold_level here
-        if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value > macd_signal_value:
+    # Trading signal logic - BUY/SELL on trend switch
+    if trend == "UPTREND" and previous_trend == "DOWNTREND": # BUY signal: Downtrend switches to Uptrend
+        if rsi_value < rsi_oversold_level: # дополнительное условие RSI для подтверждения
             signal = "BUY"
-    elif trend == "DOWNTREND" and rsi_value > rsi_overbought_sell: # Use rsi_overbought_sell here
-        if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value:
-            signal = "SELL"
+    elif trend == "DOWNTREND" and previous_trend == "UPTREND": # SELL signal: Uptrend switches to Downtrend
+        if rsi_value > rsi_overbought_sell: # дополнительное условие RSI для подтверждения
+            if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value: # MACD confirmation for SELL
+                signal = "SELL"
+            # else: # Removed else to avoid NEUTRAL signal if MACD doesn't confirm immediately - let it try to sell on next iteration if conditions improve
+            #     signal = "NEUTRAL" # No SELL if MACD doesn't confirm - now we wait for MACD to confirm in downtrend switch
     else:
         signal = "NEUTRAL"
 
@@ -777,7 +781,8 @@ def main():
                 current_strategy_params["RSI_OVERSOLD"],
                 current_strategy_params["MACD_FAST_PERIOD"],
                 current_strategy_params["MACD_SLOW_PERIOD"],
-                current_strategy_params["MACD_SIGNAL_PERIOD"]
+                current_strategy_params["MACD_SIGNAL_PERIOD"],
+                "NEUTRAL"
             )
             portfolio_value = usdc_balance + (trump_balance * current_price)
             print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC, RSI: {rsi_value:.2f}, MACD: {macd_value:.4f}, MACD Signal: {macd_signal_value:.4f}")
