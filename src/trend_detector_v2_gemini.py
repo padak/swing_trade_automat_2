@@ -31,8 +31,8 @@ MIN_TRADE_USDC = 1.2
 FAST_MA_PERIOD_DEFAULT = 12
 SLOW_MA_PERIOD_DEFAULT = 26
 RSI_PERIOD_DEFAULT = 14
-RSI_OVERBOUGHT_DEFAULT = 65  # Adjusted RSI Overbought level to 65
-RSI_OVERSOLD_DEFAULT = 35   # Adjusted RSI Oversold level to 35
+RSI_OVERBOUGHT_DEFAULT = 65  # Adjusted RSI Overbought level to 65 - Lowered default for more BUY signals
+RSI_OVERSOLD_DEFAULT = 40   # Adjusted RSI Oversold level to 40 - Increased to trigger more BUY signals
 MACD_FAST_PERIOD_DEFAULT = 12
 MACD_SLOW_PERIOD_DEFAULT = 26
 MACD_SIGNAL_PERIOD_DEFAULT = 9
@@ -227,6 +227,10 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
         print(f"Not enough data for indicators. Required: {required_periods}, Available: {len(prices)}")
         rsi_value = 50  # Default RSI when not enough data
 
+    rsi_overbought_buy = rsi_overbought # Use the general overbought parameter for BUY condition now - can be separated if needed later
+    rsi_overbought_sell = rsi_overbought # Use the same overbought parameter for SELL condition
+    rsi_oversold_level = rsi_oversold # Use the general oversold parameter
+
     # If we still don't have valid MA values, try Binance one more time
     if np.isnan(ma_fast_value) or np.isnan(ma_slow_value):
         ma_fast_value, ma_slow_value = fetch_ma_from_binance(SYMBOL)
@@ -239,10 +243,10 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
         trend = "NEUTRAL"
 
     # Trading signal logic with MACD confirmation
-    if trend == "UPTREND" and rsi_value < rsi_oversold:
+    if trend == "UPTREND" and rsi_value < rsi_oversold_level: # Use rsi_oversold_level here
         if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value > macd_signal_value:
             signal = "BUY"
-    elif trend == "DOWNTREND" and rsi_value > rsi_overbought:
+    elif trend == "DOWNTREND" and rsi_value > rsi_overbought_sell: # Use rsi_overbought_sell here
         if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value:
             signal = "SELL"
     else:
@@ -747,34 +751,44 @@ def main():
         macd_value = np.nan
         macd_signal_value = np.nan
 
+        # Fetch current price and handle None case
         current_price = fetch_current_price(SYMBOL)
-        if current_price is not None:
-            current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
-            new_row = pd.DataFrame([{'timestamp': current_time_str, 'close': current_price}])
-            prices_history = pd.concat([prices_history, new_row], ignore_index=True)
+        if current_price is None:
+            # Use last known price if available
+            if not prices_history.empty:
+                current_price = prices_history['close'].iloc[-1]
+                print(f"Price fetch failed. Using last known price: {current_price}")
+            else:
+                print("Price fetch failed and no historical data available. Skipping iteration.")
+                time.sleep(10)
+                continue
 
-            if len(prices_history) > current_strategy_params["SLOW_MA_PERIOD"]:
-                signal, trend, ma_fast, ma_slow, rsi_value, macd_value, macd_signal_value = generate_trading_signal(
-                    prices_history,
-                    current_strategy_params["FAST_MA_PERIOD"],
-                    current_strategy_params["SLOW_MA_PERIOD"],
-                    current_strategy_params["RSI_PERIOD"],
-                    current_strategy_params["RSI_OVERBOUGHT"],
-                    current_strategy_params["RSI_OVERSOLD"],
-                    current_strategy_params["MACD_FAST_PERIOD"],
-                    current_strategy_params["MACD_SLOW_PERIOD"],
-                    current_strategy_params["MACD_SIGNAL_PERIOD"]
-                )
-                portfolio_value = usdc_balance + (trump_balance * current_price)
-                print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC, RSI: {rsi_value:.2f}, MACD: {macd_value:.4f}, MACD Signal: {macd_signal_value:.4f}")
+        current_time_str = time.strftime("%Y-%m-%d %H:%M:%S")
+        new_row = pd.DataFrame([{'timestamp': current_time_str, 'close': current_price}])
+        prices_history = pd.concat([prices_history, new_row], ignore_index=True)
 
-                trade_action, trade_qty, trade_details = execute_trade(signal, current_price, usdc_balance, trump_balance)
-                if trade_action != "NEUTRAL":
-                    usdc_balance, trump_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details)
+        if len(prices_history) > current_strategy_params["SLOW_MA_PERIOD"]:
+            signal, trend, ma_fast, ma_slow, rsi_value, macd_value, macd_signal_value = generate_trading_signal(
+                prices_history,
+                current_strategy_params["FAST_MA_PERIOD"],
+                current_strategy_params["SLOW_MA_PERIOD"],
+                current_strategy_params["RSI_PERIOD"],
+                current_strategy_params["RSI_OVERBOUGHT"],
+                current_strategy_params["RSI_OVERSOLD"],
+                current_strategy_params["MACD_FAST_PERIOD"],
+                current_strategy_params["MACD_SLOW_PERIOD"],
+                current_strategy_params["MACD_SIGNAL_PERIOD"]
+            )
+            portfolio_value = usdc_balance + (trump_balance * current_price)
+            print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC, RSI: {rsi_value:.2f}, MACD: {macd_value:.4f}, MACD Signal: {macd_signal_value:.4f}")
 
-                trade_details["rsi_value"] = rsi_value
-                trade_details["macd_line"] = macd_value
-                trade_details["macd_signal"] = macd_signal_value
+            trade_action, trade_qty, trade_details = execute_trade(signal, current_price, usdc_balance, trump_balance)
+            if trade_action != "NEUTRAL":
+                usdc_balance, trump_balance = update_balance(trade_action, trade_qty, current_price, usdc_balance, trump_balance, trade_details)
+
+            trade_details["rsi_value"] = rsi_value
+            trade_details["macd_line"] = macd_value
+            trade_details["macd_signal"] = macd_signal_value
 
         current_portfolio_value = usdc_balance + (trump_balance * current_price)
         performance_percent = evaluate_performance(initial_portfolio_value, current_portfolio_value)
