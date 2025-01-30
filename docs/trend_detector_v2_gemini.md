@@ -32,24 +32,72 @@ While it's currently in simulation mode (no real trades), it helps you learn and
 
 ```mermaid
 flowchart TD
-A[Market Data] --> B{Analyze Trend}
-B -->|Price Rising| C[Uptrend]
-B -->|Price Falling| D[Downtrend]
-C --> E{Check Buy Conditions}
-E -->|1| F[RSI Below 35]
-E -->|2| G[Recent Downtrend Switch]
-E -->|3| H[Strong Upward Movement]
-F & G & H --> I{Any Condition Met?}
-I -->|Yes| J[Generate BUY Signal]
-I -->|No| K[Stay NEUTRAL]
-D --> L{Check Sell Conditions}
-L -->|1| M[RSI Above 70]
-L -->|2| N[Recent Uptrend Switch]
-L -->|3| O[MACD Confirms Down]
-L -->|4| P[Strong Downward Movement]
-M & N & O & P --> Q{Any Condition Met?}
-Q -->|Yes| R[Generate SELL Signal]
-Q -->|No| S[Stay NEUTRAL]
+    %% Data Collection and Processing
+    A[Market Data] --> B[Feature Engineering]
+    B --> C[Technical Indicators]
+    B --> D[Price Patterns]
+    
+    %% ML Model Pipeline
+    C & D --> E[ML Model Input]
+    E --> F{ML Model Processing}
+    F --> |Training Data| G[Model Training]
+    F --> |Live Data| H[Prediction]
+    
+    %% Model Components
+    G --> |Update| I[Trained Models]
+    I --> |Load| H
+    I --> |1| J[Price Direction Model]
+    I --> |2| K[Volatility Model]
+    I --> |3| L[Risk Assessment Model]
+    
+    %% Traditional Analysis
+    C --> M{Technical Analysis}
+    M -->|Rising| N[Uptrend]
+    M -->|Falling| O[Downtrend]
+    
+    %% Buy Conditions
+    N --> P{Check Buy Conditions}
+    P -->|1| Q[RSI Below 35]
+    P -->|2| R[Recent Downtrend Switch]
+    P -->|3| S[Strong Upward Movement]
+    P -->|4| T[ML Buy Signal]
+    Q & R & S & T --> U{Any Condition Met?}
+    
+    %% Sell Conditions
+    O --> V{Check Sell Conditions}
+    V -->|1| W[RSI Above 70]
+    V -->|2| X[Recent Uptrend Switch]
+    V -->|3| Y[MACD Confirms Down]
+    V -->|4| Z[ML Sell Signal]
+    W & X & Y & Z --> AA{Any Condition Met?}
+    
+    %% Final Decision
+    U -->|Yes| BB[Generate BUY Signal]
+    U -->|No| CC[Stay NEUTRAL]
+    AA -->|Yes| DD[Generate SELL Signal]
+    AA -->|No| CC
+    
+    %% Performance Feedback Loop
+    BB & DD --> EE[Trade Execution]
+    EE --> FF[Performance Analysis]
+    FF --> |Feedback| G
+    
+    %% Risk Management
+    L --> GG{Risk Check}
+    GG --> |High Risk| HH[Reduce Position Size]
+    GG --> |Low Risk| II[Normal Position Size]
+    HH & II --> EE
+    
+    %% Continuous Learning
+    FF --> JJ[Update Trading Log]
+    JJ --> KK[Performance Metrics]
+    KK --> |Optimize| G
+    
+    style A fill:#f9f,stroke:#333,stroke-width:2px
+    style I fill:#bbf,stroke:#333,stroke-width:2px
+    style BB fill:#bfb,stroke:#333,stroke-width:2px
+    style DD fill:#fbb,stroke:#333,stroke-width:2px
+    style FF fill:#fbf,stroke:#333,stroke-width:2px
 ```
 
 
