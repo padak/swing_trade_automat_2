@@ -28,19 +28,25 @@ INITIAL_TRUMP_USDC_VALUE = 500
 MIN_TRADE_USDC = 1.2
 
 # --- Strategy Parameters (Initial & Adjustable) ---
-FAST_MA_PERIOD_DEFAULT = 12
-SLOW_MA_PERIOD_DEFAULT = 26
+FAST_MA_PERIOD_DEFAULT = 50    # changed from 12 or 20
+SLOW_MA_PERIOD_DEFAULT = 200   # changed from 26 or 50
 RSI_PERIOD_DEFAULT = 14
-RSI_OVERBOUGHT_DEFAULT = 70  # Slightly Increased RSI Overbought for SELL - more conservative selling
-RSI_OVERSOLD_DEFAULT = 35   # Slightly Increased RSI Oversold for BUY - a bit less aggressive buying than before, but still more than original
+RSI_OVERBOUGHT_DEFAULT = 65    # changed from 70
+RSI_OVERSOLD_DEFAULT = 35      # still 35, but reaffirmed
 MACD_FAST_PERIOD_DEFAULT = 12
 MACD_SLOW_PERIOD_DEFAULT = 26
 MACD_SIGNAL_PERIOD_DEFAULT = 9
 BOLLINGER_BAND_PERIOD_DEFAULT = 20
 BOLLINGER_BAND_STD_DEFAULT = 2
-STOP_LOSS_PERCENT_DEFAULT = 0.02  # 2% stop loss
-TAKE_PROFIT_PERCENT_DEFAULT = 0.10 # 10% take profit
-TRADE_RISK_PERCENT_DEFAULT = 0.01 # Risk 1% of portfolio per trade
+STOP_LOSS_PERCENT_DEFAULT = 0.02
+TAKE_PROFIT_PERCENT_DEFAULT = 0.10
+TRADE_RISK_PERCENT_DEFAULT = 0.01
+
+# Introduce a new parameter: MACD_CONFIRMATION
+MACD_CONFIRMATION_DEFAULT = True  # If True, we require MACD cross for SELL downtrend signals
+
+# Introduce a new threshold if you want to confirm a minimum price change:
+MIN_PRICE_CHANGE_DEFAULT = 1.0  # from analysis recommendation (was 2.0, or not used before)
 
 # --- Global Variables ---
 client = None
@@ -62,20 +68,28 @@ SLEEP_TIME = int(os.environ.get("SLEEP_TIME", 60*5))  # Default to 5 minutes if 
 try:
     FAST_MA_PERIOD = int(os.environ.get("FAST_MA_PERIOD", FAST_MA_PERIOD_DEFAULT))
 except ValueError:
-    print(f"Warning: FAST_MA_PERIOD env var is not a valid integer, using default value: {FAST_MA_PERIOD_DEFAULT}")
-    FAST_MA_PERIOD = FAST_MA_PERIOD_DEFAULT
-except TypeError: # os.environ.get returns None if not set
-    print(f"Warning: FAST_MA_PERIOD env var is not set, using default value: {FAST_MA_PERIOD_DEFAULT}")
+    print(f"Warning: FAST_MA_PERIOD not valid int, using default {FAST_MA_PERIOD_DEFAULT}")
     FAST_MA_PERIOD = FAST_MA_PERIOD_DEFAULT
 
 try:
     SLOW_MA_PERIOD = int(os.environ.get("SLOW_MA_PERIOD", SLOW_MA_PERIOD_DEFAULT))
 except ValueError:
-    print(f"Warning: SLOW_MA_PERIOD env var is not a valid integer, using default value: {SLOW_MA_PERIOD_DEFAULT}")
+    print(f"Warning: SLOW_MA_PERIOD not valid int, using default {SLOW_MA_PERIOD_DEFAULT}")
     SLOW_MA_PERIOD = SLOW_MA_PERIOD_DEFAULT
-except TypeError: # os.environ.get returns None if not set
-    print(f"Warning: SLOW_MA_PERIOD env var is not set, using default value: {SLOW_MA_PERIOD_DEFAULT}")
-    SLOW_MA_PERIOD = SLOW_MA_PERIOD_DEFAULT
+
+try:
+    RSI_OVERBOUGHT = int(os.environ.get("RSI_OVERBOUGHT", RSI_OVERBOUGHT_DEFAULT))
+except ValueError:
+    RSI_OVERBOUGHT = RSI_OVERBOUGHT_DEFAULT
+
+try:
+    RSI_OVERSOLD = int(os.environ.get("RSI_OVERSOLD", RSI_OVERSOLD_DEFAULT))
+except ValueError:
+    RSI_OVERSOLD = RSI_OVERSOLD_DEFAULT
+
+# new variables for controlling logic
+MACD_CONFIRMATION = bool(os.environ.get("MACD_CONFIRMATION", MACD_CONFIRMATION_DEFAULT))
+MIN_PRICE_CHANGE = float(os.environ.get("MIN_PRICE_CHANGE", MIN_PRICE_CHANGE_DEFAULT))
 
 # Add at the top with other global variables
 previous_trend_state = "NEUTRAL"  # Global variable to track previous trend
@@ -255,10 +269,12 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
         # 2. Recent trend switch from downtrend OR
         # 3. Strong uptrend confirmation (MA fast significantly above MA slow)
         ma_difference_percent = ((ma_fast_value - ma_slow_value) / ma_slow_value) * 100
+        recent_price_change = (prices['close'].iloc[-1] - prices['close'].iloc[-2]) / prices['close'].iloc[-2] * 100 if len(prices) > 1 else 0
         
         if (rsi_value < rsi_oversold_level or  # Oversold condition
             previous_trend == "DOWNTREND" or    # Trend switch
-            ma_difference_percent > 0.5):       # Strong uptrend
+            ma_difference_percent > 0.5 or       # Strong uptrend
+            abs(recent_price_change) >= MIN_PRICE_CHANGE):
             signal = "BUY"
             
     elif trend == "DOWNTREND":
@@ -268,12 +284,11 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
         # 3. MACD confirmation OR
         # 4. Strong downtrend confirmation
         ma_difference_percent = ((ma_slow_value - ma_fast_value) / ma_fast_value) * 100
+        macd_is_bearish = (not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value)
         
         if ((rsi_value > rsi_overbought_sell) or          # Overbought condition
             (previous_trend == "UPTREND") or              # Trend switch
-            (not np.isnan(macd_value) and 
-             not np.isnan(macd_signal_value) and 
-             macd_value < macd_signal_value) or           # MACD confirmation
+            (MACD_CONFIRMATION and macd_is_bearish) or      # MACD confirmation
             ma_difference_percent > 0.5):                  # Strong downtrend
             signal = "SELL"
 
