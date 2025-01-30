@@ -77,6 +77,8 @@ except TypeError: # os.environ.get returns None if not set
     print(f"Warning: SLOW_MA_PERIOD env var is not set, using default value: {SLOW_MA_PERIOD_DEFAULT}")
     SLOW_MA_PERIOD = SLOW_MA_PERIOD_DEFAULT
 
+# Add at the top with other global variables
+previous_trend_state = "NEUTRAL"  # Global variable to track previous trend
 
 def initialize_client():
     """Initialize the Binance client."""
@@ -165,7 +167,8 @@ def fetch_ma_from_binance(symbol, interval="1m", fast_period=7, slow_period=25):
         return np.nan, np.nan
 
 
-def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, rsi_overbought, rsi_oversold, macd_fast_period, macd_slow_period, macd_signal_period, previous_trend):
+def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, rsi_overbought, rsi_oversold, 
+                          macd_fast_period, macd_slow_period, macd_signal_period, previous_trend):
     """
     Generates a trading signal based on Moving Averages, RSI, and MACD, focusing on trend changes.
     Returns: signal, trend, ma_fast, ma_slow, rsi_value, macd_value, macd_signal_value
@@ -243,18 +246,36 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
     else:
         trend = "NEUTRAL"
 
-    # Trading signal logic - BUY/SELL on trend switch
-    if trend == "UPTREND" and previous_trend == "DOWNTREND": # BUY signal: Downtrend switches to Uptrend
-        if rsi_value < rsi_oversold_level: # дополнительное условие RSI для подтверждения
+    # More nuanced trading signal logic
+    signal = "NEUTRAL"  # Default signal
+    
+    if trend == "UPTREND":
+        # Buy conditions in uptrend:
+        # 1. RSI shows oversold condition OR
+        # 2. Recent trend switch from downtrend OR
+        # 3. Strong uptrend confirmation (MA fast significantly above MA slow)
+        ma_difference_percent = ((ma_fast_value - ma_slow_value) / ma_slow_value) * 100
+        
+        if (rsi_value < rsi_oversold_level or  # Oversold condition
+            previous_trend == "DOWNTREND" or    # Trend switch
+            ma_difference_percent > 0.5):       # Strong uptrend
             signal = "BUY"
-    elif trend == "DOWNTREND" and previous_trend == "UPTREND": # SELL signal: Uptrend switches to Downtrend
-        if rsi_value > rsi_overbought_sell: # дополнительное условие RSI для подтверждения
-            if not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value: # MACD confirmation for SELL
-                signal = "SELL"
-            # else: # Removed else to avoid NEUTRAL signal if MACD doesn't confirm immediately - let it try to sell on next iteration if conditions improve
-            #     signal = "NEUTRAL" # No SELL if MACD doesn't confirm - now we wait for MACD to confirm in downtrend switch
-    else:
-        signal = "NEUTRAL"
+            
+    elif trend == "DOWNTREND":
+        # Sell conditions in downtrend:
+        # 1. RSI shows overbought condition OR
+        # 2. Recent trend switch from uptrend OR
+        # 3. MACD confirmation OR
+        # 4. Strong downtrend confirmation
+        ma_difference_percent = ((ma_slow_value - ma_fast_value) / ma_fast_value) * 100
+        
+        if ((rsi_value > rsi_overbought_sell) or          # Overbought condition
+            (previous_trend == "UPTREND") or              # Trend switch
+            (not np.isnan(macd_value) and 
+             not np.isnan(macd_signal_value) and 
+             macd_value < macd_signal_value) or           # MACD confirmation
+            ma_difference_percent > 0.5):                  # Strong downtrend
+            signal = "SELL"
 
     return signal, trend, ma_fast_value, ma_slow_value, rsi_value, macd_value, macd_signal_value
 
@@ -637,7 +658,7 @@ def prepare_log_message(current_time_str, iteration, current_price, signal, tren
 
 
 def main():
-    global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled, trade_history, last_performance_iteration, prices_history, model
+    global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled, trade_history, last_performance_iteration, prices_history, model, previous_trend_state
 
     import signal
 
@@ -782,8 +803,12 @@ def main():
                 current_strategy_params["MACD_FAST_PERIOD"],
                 current_strategy_params["MACD_SLOW_PERIOD"],
                 current_strategy_params["MACD_SIGNAL_PERIOD"],
-                "NEUTRAL"
+                previous_trend_state  # Pass the stored previous trend
             )
+            
+            # Store the current trend for the next iteration
+            previous_trend_state = trend
+
             portfolio_value = usdc_balance + (trump_balance * current_price)
             print(f"Current Price: {current_price:.2f}, Signal: {signal}, Portfolio Value: {portfolio_value:.2f} USDC, RSI: {rsi_value:.2f}, MACD: {macd_value:.4f}, MACD Signal: {macd_signal_value:.4f}")
 
