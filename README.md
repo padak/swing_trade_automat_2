@@ -19,12 +19,23 @@ swing_trade_automat_2/
 
 ## Setup
 
-1. Create required directories:
+1. Clone the repository:
+```bash
+# Clone using HTTPS
+git clone https://github.com/padak/swing_trade_automat_2.git
+# or clone using SSH
+git clone git@github.com:padak/swing_trade_automat_2.git
+
+# Navigate to the project directory
+cd swing_trade_automat_2
+```
+
+2. Create required directories:
 ```bash
 mkdir -p logs/plots model
 ```
 
-2. Create and activate a virtual environment:
+3. Create and activate a virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Unix/macOS
@@ -32,12 +43,12 @@ source venv/bin/activate  # On Unix/macOS
 .\venv\Scripts\activate  # On Windows
 ```
 
-3. Install dependencies:
+4. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Create a `.env` file in the root directory with your Binance API credentials:
+5. Create a `.env` file in the root directory with your Binance API credentials:
 ```env
 BINANCE_API_KEY=your_api_key_here
 BINANCE_API_SECRET=your_api_secret_here
