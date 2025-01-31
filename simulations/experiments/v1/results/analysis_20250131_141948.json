@@ -1,0 +1,8 @@
+{
+  "trade_analysis": {
+    "total_trades": 1004,
+    "buy_trades": 665,
+    "sell_trades": 339,
+    "trade_details": [
+      {
+        "entry_time": 

@@ -3,13 +3,13 @@ import os
 import sys
 from tqdm import tqdm
 import json
+from datetime import datetime
 
 # Add the project root directory to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
 import time
-from datetime import datetime
 import numpy as np
 import pandas as pd
 import pandas_ta as ta  # for technical indicators
@@ -62,6 +62,7 @@ trade_history = [] # List to store trade details for performance reporting
 last_performance_iteration = 0 # To track when to reset trade history
 prices_history = pd.DataFrame(columns=['timestamp', 'close']) # DataFrame for price history
 rolling_window = pd.DataFrame(columns=['timestamp', 'close']) # Initialize rolling window globally
+detailed_log_file = None # Initialize detailed log file path
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_API_SECRET = os.environ.get("GEMINI_API_SECRET")
@@ -654,7 +655,15 @@ def load_market_data():
 
 def log_detailed_data(results_dir: str, iteration_data: dict):
     """Log detailed trading data to a JSON file."""
-    detailed_log_file = os.path.join(results_dir, "detailed_log.jsonl")
+    # Get the timestamp for the filename
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Create the detailed log filename with timestamp if it doesn't exist yet
+    global detailed_log_file  # Add this at the top of the file with other globals
+    if 'detailed_log_file' not in globals():
+        detailed_log_file = os.path.join(results_dir, f"detailed_log_{timestamp}.jsonl")
+    
+    # Append the data to the log file
     with open(detailed_log_file, 'a') as f:
         f.write(json.dumps(iteration_data) + '\n')
 
@@ -662,7 +671,11 @@ def log_detailed_data(results_dir: str, iteration_data: dict):
 def main():
     global initial_trump_qty, current_strategy_params, historical_performance, trading_enabled
     global trade_history, last_performance_iteration, prices_history, model, previous_trend_state
-    global rolling_window
+    global rolling_window, detailed_log_file  # Add detailed_log_file to globals list
+
+    # Reset the detailed_log_file at the start of each run
+    if 'detailed_log_file' in globals():
+        del detailed_log_file
 
     print("Loading market data...")
     market_data = load_market_data()
@@ -814,7 +827,7 @@ def main():
     # Calculate benchmark performance
     final_benchmark_value = INITIAL_USDC + (initial_trump_qty * current_price)
     benchmark_return = ((final_benchmark_value / initial_portfolio_value) - 1) * 100
-    
+
     # Trading statistics
     total_trades = len(trade_history)
     buy_trades = len([t for t in trade_history if t['action'] == 'BUY'])

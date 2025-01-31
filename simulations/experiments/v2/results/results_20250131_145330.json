@@ -1,0 +1,35 @@
+{
+  "total_trades": 1004,
+  "buy_trades": 665,
+  "sell_trades": 339,
+  "profitable_trades": 676,
+  "win_rate": 67.33067729083665,
+  "total_return": 5.376778435103025,
+  "benchmark_return": -0.8821321321321185,
+  "initial_portfolio_value": 1000,
+  "final_portfolio_value": 1053.7677843510303,
+  "strategy_vs_benchmark": 6.258910567235143,
+  "experiment": {
+    "name": "v2",
+    "description": "Experiment with adjusted RSI and MACD parameters based on analysis recommendations",
+    "version": "v2",
+    "timestamp": "20250131_145330",
+    "parameters": {
+      "FAST_MA_PERIOD": 10,
+      "SLOW_MA_PERIOD": 30,
+      "RSI_PERIOD": 14,
+      "RSI_OVERBOUGHT": 70,
+      "RSI_OVERSOLD": 30,
+      "MACD_FAST_PERIOD": 12,
+      "MACD_SLOW_PERIOD": 26,
+      "MACD_SIGNAL_PERIOD": 9,
+      "BOLLINGER_BAND_PERIOD": 20,
+      "BOLLINGER_BAND_STD": 2,
+      "STOP_LOSS_PERCENT": 0.02,
+      "TAKE_PROFIT_PERCENT": 0.1,
+      "TRADE_RISK_PERCENT": 0.01,
+      "MIN_PRICE_CHANGE": 1.5,
+      "MACD_CONFIRMATION": true
+    }
+  }
+}
