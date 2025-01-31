@@ -6,34 +6,35 @@ This document describes the workflow for running trading strategy simulations, a
 
 ```mermaid
 graph TD
-    A[Start] --> B[Run Experiment]
-    B --> C[Generate Results]
-    C --> D[Analyze Results]
-    D --> E[Generate Recommendations]
-    E --> F[Create New Experiment]
-    F --> B
-    
+    A[Start] --> RunExp
+
     subgraph RunExp["1. Run Experiment"]
-        B --> B1[Load Configuration]
+        B[Run Experiment] --> B1[Load Configuration]
         B1 --> B2[Load Market Data]
         B2 --> B3[Execute Backtest]
         B3 --> B4[Save Results]
     end
-    
+
     subgraph Analysis["2. Analysis"]
-        D --> D1[Load Trade Data]
+        D[Analyze Results] --> D1[Load Trade Data]
         D1 --> D2[Analyze Trades]
         D2 --> D3[Analyze Signals]
         D3 --> D4[Generate Recommendations]
         D4 --> D5[Save Analysis]
     end
-    
+
     subgraph NewExp["3. New Experiment"]
-        F --> F1[Load Previous Analysis]
+        F[Create New Experiment] --> F1[Load Previous Analysis]
         F1 --> F2[Apply Recommendations]
         F2 --> F3[Generate Config]
         F3 --> F4[Create Experiment]
     end
+
+    RunExp --> C[Generate Results]
+    C --> Analysis
+    Analysis --> E[Generate Recommendations]
+    E --> NewExp
+    NewExp --> RunExp
 ```
 
 ## Detailed Steps
