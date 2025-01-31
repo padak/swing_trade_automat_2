@@ -3,6 +3,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from typing import Tuple, Dict
 from concurrent.futures import ProcessPoolExecutor
+import os
+
+# Add constants for directories
+LOGS_DIR = "logs"
+TRADING_LOG_PATH = os.path.join(LOGS_DIR, "trading_log.csv")
 
 def calculate_optimal_rsi_levels(df: pd.DataFrame) -> Tuple[float, float]:
     """
@@ -171,7 +176,10 @@ def analyze_trend_detection(df: pd.DataFrame) -> Dict:
         'total_downtrends': 0,
         'total_neutral': 0,
         'false_positive_uptrend': 0,
-        'false_positive_downtrend': 0
+        'false_positive_downtrend': 0,
+        'uptrend_accuracy': 0.0,
+        'downtrend_accuracy': 0.0,
+        'neutral_accuracy': 0.0
     }
     
     # Calculate actual price trends using 3-period momentum
@@ -209,6 +217,14 @@ def analyze_trend_detection(df: pd.DataFrame) -> Dict:
             results['false_positive_uptrend'] += 1
         if model_trend == 'DOWNTREND' and actual_trend != 'DOWNTREND':
             results['false_positive_downtrend'] += 1
+    
+    # Calculate accuracies with zero division protection
+    if results['total_uptrends'] > 0:
+        results['uptrend_accuracy'] = results['uptrend_correct'] / results['total_uptrends']
+    if results['total_downtrends'] > 0:
+        results['downtrend_accuracy'] = results['downtrend_correct'] / results['total_downtrends']
+    if results['total_neutral'] > 0:
+        results['neutral_accuracy'] = results['neutral_correct'] / results['total_neutral']
             
     return results
 
@@ -220,7 +236,10 @@ def find_leading_indicators(df: pd.DataFrame) -> Dict:
         'RSI_lead': 0,
         'MACD_lead': 0,
         'MA_lead': 0,
-        'total_changes': 0
+        'total_changes': 0,
+        'RSI_accuracy': 0.0,
+        'MACD_accuracy': 0.0,
+        'MA_accuracy': 0.0
     }
     
     # Calculate future price changes
@@ -237,6 +256,12 @@ def find_leading_indicators(df: pd.DataFrame) -> Dict:
             
         if abs(df['Future_3_Change'].iloc[i]) > 0.02:
             leads['total_changes'] += 1
+    
+    # Calculate accuracies with zero division protection
+    if leads['total_changes'] > 0:
+        leads['RSI_accuracy'] = leads['RSI_lead'] / leads['total_changes']
+        leads['MACD_accuracy'] = leads['MACD_lead'] / leads['total_changes']
+        leads['MA_accuracy'] = leads['MA_lead'] / leads['total_changes']
             
     return leads
 
@@ -279,6 +304,52 @@ def calculate_rsi(prices, period=14):
     rsi = 100 - (100 / (1 + rs))
     
     return rsi
+
+def suggest_trend_detector_adjustments(trend_results: dict) -> dict:
+    """
+    Based on uptrend/downtrend detection accuracy, propose changes
+    to RSI thresholds and moving average periods to improve performance.
+    Example heuristic approach for demonstration.
+    """
+    recommended = {
+        "new_rsi_overbought": None,
+        "new_rsi_oversold": None,
+        "new_fast_ma_period": None,
+        "new_slow_ma_period": None
+    }
+
+    # Heuristic rules to adjust RSI
+    # e.g. if we have poor uptrend detection, we want RSI oversold higher (less conservative)
+    # if we have poor downtrend detection, we want RSI overbought lower.
+    uptrend_acc = trend_results.get('uptrend_accuracy', 0)
+    downtrend_acc = trend_results.get('downtrend_accuracy', 0)
+
+    # Start with placeholders (assumes default 70/30 for RSI)
+    rsi_overbought = 70
+    rsi_oversold = 30
+    fast_ma = 10
+    slow_ma = 30
+
+    # If uptrend detection is under 70%, make RSI oversold more lenient (increase)
+    if uptrend_acc < 0.70:
+        rsi_oversold += 5  # more lenient buy condition
+
+    # If downtrend detection is under 70%, make RSI overbought more aggressive (decrease)
+    if downtrend_acc < 0.70:
+        rsi_overbought -= 5  # more aggressive sell condition
+
+    recommended["new_rsi_overbought"] = rsi_overbought
+    recommended["new_rsi_oversold"] = rsi_oversold
+
+    # Optionally, tweak fast/slow MA if both uptrend and downtrend performance is weak
+    if uptrend_acc < 0.60 and downtrend_acc < 0.60:
+        fast_ma = 8  # example minor shift
+        slow_ma = 28
+
+    recommended["new_fast_ma_period"] = fast_ma
+    recommended["new_slow_ma_period"] = slow_ma
+
+    return recommended
 
 def analyze_trading_log(log_filepath):
     """
@@ -364,21 +435,54 @@ def analyze_trading_log(log_filepath):
     print("\n--- Trend Detection Accuracy ---")
     try:
         trend_results = analyze_trend_detection(df)
-        print(f"Uptrend Detection Accuracy: {trend_results['uptrend_correct']/trend_results['total_uptrends']:.1%}")
-        print(f"Downtrend Detection Accuracy: {trend_results['downtrend_correct']/trend_results['total_downtrends']:.1%}")
+        print(f"Uptrend Detection Accuracy: {trend_results['uptrend_accuracy']:.1%}")
+        print(f"Downtrend Detection Accuracy: {trend_results['downtrend_accuracy']:.1%}")
+        print(f"Total Uptrends Detected: {trend_results['total_uptrends']}")
+        print(f"Total Downtrends Detected: {trend_results['total_downtrends']}")
+        print(f"False Positive Uptrends: {trend_results['false_positive_uptrend']}")
+        print(f"False Positive Downtrends: {trend_results['false_positive_downtrend']}")
+
+        # --------------------------------------------------------
+        # NEW: Automatically suggest parameter adjustments
+        suggested_params = suggest_trend_detector_adjustments(trend_results)
+        print("\n--- Suggested Adjustments for trend_detector_v2_gemini.py ---")
+        print("Adjust RSI_Overbought to:", suggested_params["new_rsi_overbought"])
+        print("Adjust RSI_Oversold to:", suggested_params["new_rsi_oversold"])
+        print("Adjust FAST_MA_PERIOD to:", suggested_params["new_fast_ma_period"])
+        print("Adjust SLOW_MA_PERIOD to:", suggested_params["new_slow_ma_period"])
+        # --------------------------------------------------------
+        
     except Exception as e:
         print("Trend analysis failed:", str(e))
 
     print("\n--- Leading Indicators Analysis ---")
     try:
         lead_results = find_leading_indicators(df)
-        print(f"RSI Leading Accuracy: {lead_results['RSI_lead']/lead_results['total_changes']:.1%}")
-        print(f"MACD Leading Accuracy: {lead_results['MACD_lead']/lead_results['total_changes']:.1%}")
+        print(f"RSI Leading Accuracy: {lead_results['RSI_accuracy']:.1%}")
+        print(f"MACD Leading Accuracy: {lead_results['MACD_accuracy']:.1%}")
+        print(f"MA Leading Accuracy: {lead_results['MA_accuracy']:.1%}")
+        print(f"Total Price Changes Analyzed: {lead_results['total_changes']}")
+        print(f"RSI Successful Predictions: {lead_results['RSI_lead']}")
+        print(f"MACD Successful Predictions: {lead_results['MACD_lead']}")
+        print(f"MA Successful Predictions: {lead_results['MA_lead']}")
     except Exception as e:
         print("Leading indicator analysis failed:", str(e))
 
     # Rest of your analysis code...
 
 if __name__ == "__main__":
-    log_file = 'src/trading_log.csv'  # Replace with the actual path to your log file if needed
-    analyze_trading_log(log_file)
+    # Create logs directory if it doesn't exist
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    
+    # Check if trading log exists
+    if not os.path.exists(TRADING_LOG_PATH):
+        print(f"Error: Trading log file not found at {TRADING_LOG_PATH}")
+        print("Please run the trend detector first to generate trading data.")
+        exit(1)
+        
+    print(f"Analyzing trading log from: {TRADING_LOG_PATH}")
+    analyze_trading_log(TRADING_LOG_PATH)
+    
+    # Save the visualization in the logs directory
+    plt.savefig(os.path.join(LOGS_DIR, 'trading_analysis.png'))
+    print(f"\nVisualization saved as: {os.path.join(LOGS_DIR, 'trading_analysis.png')}")

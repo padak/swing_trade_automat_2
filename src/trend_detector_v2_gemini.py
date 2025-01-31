@@ -28,11 +28,11 @@ INITIAL_TRUMP_USDC_VALUE = 500
 MIN_TRADE_USDC = 1.2
 
 # --- Strategy Parameters (Initial & Adjustable) ---
-FAST_MA_PERIOD_DEFAULT = 50    # changed from 12 or 20
-SLOW_MA_PERIOD_DEFAULT = 200   # changed from 26 or 50
+FAST_MA_PERIOD_DEFAULT = 10
+SLOW_MA_PERIOD_DEFAULT = 30
 RSI_PERIOD_DEFAULT = 14
-RSI_OVERBOUGHT_DEFAULT = 65    # changed from 70
-RSI_OVERSOLD_DEFAULT = 35      # still 35, but reaffirmed
+RSI_OVERBOUGHT_DEFAULT = 70
+RSI_OVERSOLD_DEFAULT = 35
 MACD_FAST_PERIOD_DEFAULT = 12
 MACD_SLOW_PERIOD_DEFAULT = 26
 MACD_SIGNAL_PERIOD_DEFAULT = 9
@@ -93,6 +93,12 @@ MIN_PRICE_CHANGE = float(os.environ.get("MIN_PRICE_CHANGE", MIN_PRICE_CHANGE_DEF
 
 # Add at the top with other global variables
 previous_trend_state = "NEUTRAL"  # Global variable to track previous trend
+
+# Add these constants near the top of the file, after other constants
+MODEL_DIR = "model"
+LOGS_DIR = "logs"
+MODEL_PATH = os.path.join(MODEL_DIR, "trading_model.joblib")
+TRADING_LOG_PATH = os.path.join(LOGS_DIR, "trading_log.csv")
 
 def initialize_client():
     """Initialize the Binance client."""
@@ -567,8 +573,8 @@ def signal_handler(sig, frame):
     if model:
         print("Saving trained ML model...")
         try:
-            dump(model, 'trading_model.joblib')
-            print("ML model saved successfully to trading_model.joblib")
+            dump(model, MODEL_PATH)
+            print(f"ML model saved successfully to {MODEL_PATH}")
         except Exception as e:
             print(f"Error saving ML model: {e}")
 
@@ -708,8 +714,8 @@ def main():
 
     print("Checking for saved ML model...")
     try:
-        model = load('trading_model.joblib')
-        print("Pre-trained ML model loaded successfully from trading_model.joblib")
+        model = load(MODEL_PATH)
+        print(f"Pre-trained ML model loaded successfully from {MODEL_PATH}")
     except FileNotFoundError:
         print("No saved ML model found. Training new model.")
         if historical_df is None or historical_df.empty:
@@ -731,6 +737,12 @@ def main():
                 y_pred = model.predict(X_test)
                 accuracy = accuracy_score(y_test, y_pred)
                 print(f"Model trained. Accuracy on test set: {accuracy:.2f}")
+                # Save the model in the new location
+                try:
+                    dump(model, MODEL_PATH)
+                    print(f"ML model saved successfully to {MODEL_PATH}")
+                except Exception as e:
+                    print(f"Error saving ML model: {e}")
             else:
                 print("ML model training failed. Trading will proceed without ML.")
     except Exception as e:
@@ -755,11 +767,21 @@ def main():
                 y_pred = model.predict(X_test)
                 accuracy = accuracy_score(y_test, y_pred)
                 print(f"Model trained. Accuracy on test set: {accuracy:.2f}")
+                # Save the model in the new location
+                try:
+                    dump(model, MODEL_PATH)
+                    print(f"ML model saved successfully to {MODEL_PATH}")
+                except Exception as e:
+                    print(f"Error saving ML model: {e}")
             else:
                 print("ML model training failed. Trading will proceed without ML.")
 
     iteration = 0
-    log_file = "trading_log.csv"
+    log_file = TRADING_LOG_PATH
+
+    # Create logs directory if it doesn't exist
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    os.makedirs(MODEL_DIR, exist_ok=True)
 
     # Remove the code that deletes the existing file
     # Instead, only create the file with headers if it doesn't exist
