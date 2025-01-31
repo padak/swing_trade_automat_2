@@ -13,14 +13,14 @@ graph TD
     E --> F[Create New Experiment]
     F --> B
     
-    subgraph "1. Run Experiment"
+    subgraph RunExp["1. Run Experiment"]
         B --> B1[Load Configuration]
         B1 --> B2[Load Market Data]
         B2 --> B3[Execute Backtest]
         B3 --> B4[Save Results]
     end
     
-    subgraph "2. Analysis"
+    subgraph Analysis["2. Analysis"]
         D --> D1[Load Trade Data]
         D1 --> D2[Analyze Trades]
         D2 --> D3[Analyze Signals]
@@ -28,7 +28,7 @@ graph TD
         D4 --> D5[Save Analysis]
     end
     
-    subgraph "3. New Experiment"
+    subgraph NewExp["3. New Experiment"]
         F --> F1[Load Previous Analysis]
         F1 --> F2[Apply Recommendations]
         F2 --> F3[Generate Config]
