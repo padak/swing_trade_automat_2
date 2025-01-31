@@ -1,7 +1,11 @@
 from joblib import load
 import os
 
-def inspect_trained_model(model_path='src/trading_model.joblib'):
+# Add constants for directories
+MODEL_DIR = "model"
+MODEL_PATH = os.path.join(MODEL_DIR, "trading_model.joblib")
+
+def inspect_trained_model(model_path=MODEL_PATH):
     """
     Loads a trained Logistic Regression model from a joblib file and prints its attributes.
 
@@ -9,6 +13,11 @@ def inspect_trained_model(model_path='src/trading_model.joblib'):
         model_path (str): Path to the joblib file containing the trained model.
     """
     try:
+        # Check if model directory exists
+        if not os.path.exists(MODEL_DIR):
+            print(f"Warning: Model directory not found at: {MODEL_DIR}")
+            return
+
         # Load the model from the file
         model = load(model_path)
         print(f"Model loaded successfully from: {model_path}")
@@ -29,6 +38,7 @@ def inspect_trained_model(model_path='src/trading_model.joblib'):
 
     except FileNotFoundError:
         print(f"Error: Model file not found at: {model_path}")
+        print("Please run the trend detector first to generate the model.")
     except Exception as e:
         print(f"Error loading or inspecting the model: {e}")
 
