@@ -251,14 +251,11 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
         print(f"Not enough data for indicators. Required: {required_periods}, Available: {len(prices)}")
         rsi_value = 50  # Default RSI when not enough data
 
-    rsi_overbought_buy = rsi_overbought # Use the general overbought parameter for BUY condition
-    rsi_overbought_sell = rsi_overbought # Use the same overbought parameter for SELL condition
-    rsi_oversold_level = rsi_oversold # Use the general oversold parameter
-
     # If we still don't have valid MA values, try Binance one more time
     if np.isnan(ma_fast_value) or np.isnan(ma_slow_value):
         ma_fast_value, ma_slow_value = fetch_ma_from_binance(SYMBOL)
 
+    # Determine current trend
     if ma_fast_value > ma_slow_value:
         trend = "UPTREND"
     elif ma_fast_value < ma_slow_value:
@@ -266,37 +263,48 @@ def generate_trading_signal(prices, fast_ma_period, slow_ma_period, rsi_period, 
     else:
         trend = "NEUTRAL"
 
-    # More nuanced trading signal logic
-    signal = "NEUTRAL"  # Default signal
+    # Calculate price momentum and trend strength
+    ma_difference_percent = ((ma_fast_value - ma_slow_value) / ma_slow_value) * 100
+    recent_price_change = (prices['close'].iloc[-1] - prices['close'].iloc[-2]) / prices['close'].iloc[-2] * 100 if len(prices) > 1 else 0
     
-    if trend == "UPTREND":
-        # Buy conditions in uptrend:
-        # 1. RSI shows oversold condition OR
-        # 2. Recent trend switch from downtrend OR
-        # 3. Strong uptrend confirmation (MA fast significantly above MA slow)
-        ma_difference_percent = ((ma_fast_value - ma_slow_value) / ma_slow_value) * 100
-        recent_price_change = (prices['close'].iloc[-1] - prices['close'].iloc[-2]) / prices['close'].iloc[-2] * 100 if len(prices) > 1 else 0
-        
-        if (rsi_value < rsi_oversold_level or  # Oversold condition
-            previous_trend == "DOWNTREND" or    # Trend switch
-            ma_difference_percent > 0.5 or       # Strong uptrend
-            abs(recent_price_change) >= MIN_PRICE_CHANGE):
-            signal = "BUY"
-            
-    elif trend == "DOWNTREND":
-        # Sell conditions in downtrend:
-        # 1. RSI shows overbought condition OR
-        # 2. Recent trend switch from uptrend OR
-        # 3. MACD confirmation OR
-        # 4. Strong downtrend confirmation
-        ma_difference_percent = ((ma_slow_value - ma_fast_value) / ma_fast_value) * 100
-        macd_is_bearish = (not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value)
-        
-        if ((rsi_value > rsi_overbought_sell) or          # Overbought condition
-            (previous_trend == "UPTREND") or              # Trend switch
-            (MACD_CONFIRMATION and macd_is_bearish) or      # MACD confirmation
-            ma_difference_percent > 0.5):                  # Strong downtrend
-            signal = "SELL"
+    # MACD confirmation
+    macd_is_bullish = (not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value > macd_signal_value)
+    macd_is_bearish = (not np.isnan(macd_value) and not np.isnan(macd_signal_value) and macd_value < macd_signal_value)
+
+    # New trading logic - Buy Low, Sell High
+    signal = "NEUTRAL"  # Default signal
+
+    # BUY CONDITIONS - Look for buying opportunities during price weakness
+    if (
+        # Buy when price is showing weakness but potential reversal
+        (trend == "DOWNTREND" and (
+            (rsi_value <= rsi_oversold) or  # Oversold condition
+            (previous_trend == "DOWNTREND" and trend == "UPTREND") or  # Trend reversal
+            (macd_is_bullish and abs(recent_price_change) >= MIN_PRICE_CHANGE)  # MACD confirms potential reversal
+        )) or
+        # Also buy on strong upward momentum after a dip
+        (trend == "UPTREND" and
+         rsi_value < 50 and  # Not overbought
+         macd_is_bullish and
+         previous_trend == "DOWNTREND")  # Confirmed trend reversal
+    ):
+        signal = "BUY"
+
+    # SELL CONDITIONS - Look for selling opportunities during price strength
+    elif (
+        # Sell when price is showing strength but potential reversal
+        (trend == "UPTREND" and (
+            (rsi_value >= rsi_overbought) or  # Overbought condition
+            (previous_trend == "UPTREND" and trend == "DOWNTREND") or  # Trend reversal
+            (macd_is_bearish and abs(recent_price_change) >= MIN_PRICE_CHANGE)  # MACD confirms potential reversal
+        )) or
+        # Also sell on strong downward momentum after a peak
+        (trend == "DOWNTREND" and
+         rsi_value > 50 and  # Not oversold
+         macd_is_bearish and
+         previous_trend == "UPTREND")  # Confirmed trend reversal
+    ):
+        signal = "SELL"
 
     return signal, trend, ma_fast_value, ma_slow_value, rsi_value, macd_value, macd_signal_value
 
