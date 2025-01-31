@@ -1,0 +1,25 @@
+{
+  "total_trades": 1145,
+  "buy_trades": 760,
+  "sell_trades": 385,
+  "profitable_trades": 768,
+  "win_rate": 67.07423580786026,
+  "total_return": 5.774584505642721,
+  "benchmark_return": -0.8821321321321185,
+  "experiment": {
+    "name": "v1_aggressive_rsi",
+    "description": "Testing aggressive RSI levels with tighter MACD parameters",
+    "version": "1.0",
+    "timestamp": "20250131_134821",
+    "parameters": {
+      "RSI_OVERBOUGHT": 75,
+      "RSI_OVERSOLD": 30,
+      "MACD_FAST_PERIOD": 8,
+      "MACD_SLOW_PERIOD": 17,
+      "MACD_SIGNAL_PERIOD": 9,
+      "NAME": "v1_aggressive_rsi",
+      "DESCRIPTION": "Testing aggressive RSI levels with tighter MACD parameters",
+      "VERSION": "1.0"
+    }
+  }
+}
