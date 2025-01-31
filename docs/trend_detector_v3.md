@@ -70,16 +70,17 @@ flowchart TD
     G -- No --> H[Collect more data & Sleep]
     H --> D
     G -- Yes --> I[Generate Trading Signal]
-    I --> J[Calculate Technical Indicators: MA, RSI, MACD, Volume Ratio, Trend Strength]
-    J --> K[Determine Trend (UPTREND / DOWNTREND / NEUTRAL)]
-    K --> L{Signal: BUY or SELL?}
+    I --> J[Calculate Technical Indicators]
+    J --> K[Determine Trend]
+    K --> L{Signal Type?}
     L -- BUY --> M[Check Minimum Hold Time]
-    M --> N[Execute BUY: Compute qty and update balances]
+    M --> N[Execute BUY Trade]
     L -- SELL --> O[Check Minimum Hold Time]
-    O --> P[Execute SELL: Compute qty and update balances]
-    N --> Q[Log Trade Activity & Update Last Trade Time]
+    O --> P[Execute SELL Trade]
+    L -- NEUTRAL --> T
+    N --> Q[Log Trade Activity]
     P --> Q
-    Q --> R[Calculate Portfolio Performance]
+    Q --> R[Calculate Performance]
     R --> S[Log Trading Activity]
     S --> T[Wait for next iteration]
     T --> D
