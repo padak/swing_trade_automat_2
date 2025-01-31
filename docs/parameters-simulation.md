@@ -1,112 +1,154 @@
-# Trading Strategy Parameter Simulation
+# Trading Strategy Parameter Simulation Workflow
 
-This document describes how to use the parameter simulation system to experiment with different trading strategy configurations.
+This document describes the workflow for running trading strategy simulations, analyzing results, and generating new experiments with optimized parameters.
 
-## Overview
+## Workflow Overview
 
-The simulation system allows you to test different trading parameters using historical market data. Each experiment is defined in a separate configuration file, making it easy to compare different strategies and parameter sets.
+```mermaid
+graph TD
+    A[Start] --> B[Run Experiment]
+    B --> C[Generate Results]
+    C --> D[Analyze Results]
+    D --> E[Generate Recommendations]
+    E --> F[Create New Experiment]
+    F --> B
+    
+    subgraph "1. Run Experiment"
+        B --> B1[Load Configuration]
+        B1 --> B2[Load Market Data]
+        B2 --> B3[Execute Backtest]
+        B3 --> B4[Save Results]
+    end
+    
+    subgraph "2. Analysis"
+        D --> D1[Load Trade Data]
+        D1 --> D2[Analyze Trades]
+        D2 --> D3[Analyze Signals]
+        D3 --> D4[Generate Recommendations]
+        D4 --> D5[Save Analysis]
+    end
+    
+    subgraph "3. New Experiment"
+        F --> F1[Load Previous Analysis]
+        F1 --> F2[Apply Recommendations]
+        F2 --> F3[Generate Config]
+        F3 --> F4[Create Experiment]
+    end
+```
+
+## Detailed Steps
+
+### 1. Run Experiment
+```bash
+python src/trend_detector_backtest.py --experiment simulations/experiments/vX
+```
+This step:
+- Loads experiment configuration from `config.py`
+- Processes market data
+- Executes trading strategy
+- Generates:
+  - `detailed_log_[timestamp].jsonl`: Detailed trade and signal data
+  - `results_[timestamp].json`: Summary results
+
+### 2. Analyze Results
+```bash
+python simulations/analysis/analyze_experiment.py --experiment simulations/experiments/vX
+```
+This step:
+- Loads the most recent experiment results
+- Analyzes:
+  - Trade performance
+  - Signal effectiveness
+  - Parameter impact
+- Generates:
+  - `analysis_[timestamp].json`: Analysis results and recommendations
+
+### 3. Generate New Experiment
+```bash
+python simulations/analysis/experiment_generator.py --base-experiment simulations/experiments/vX --name vY
+```
+This step:
+- Loads the most recent analysis
+- Uses recommendations to set new parameters
+- Creates new experiment configuration
 
 ## Directory Structure
-
 ```
 simulations/
-├── __init__.py
-├── base_config.py          # Base configuration with default parameters
-├── experiment_manager.py   # Handles experiment execution and results
-├── market_data/           # Historical market data for simulations
-│   └── TRUMPUSDC.csv
-└── experiments/           # Individual experiment configurations
-    └── v1/
-        ├── config.py      # Experiment-specific parameters
-        └── results/       # Experiment results in JSON format
+├── experiments/
+│   ├── v1/
+│   │   ├── config.py
+│   │   └── results/
+│   │       ├── detailed_log_[timestamp].jsonl
+│   │       ├── results_[timestamp].json
+│   │       └── analysis_[timestamp].json
+│   ├── v2/
+│   │   └── ...
+│   └── v3/
+│       └── ...
+└── analysis/
+    ├── analyze_experiment.py
+    └── experiment_generator.py
 ```
 
-## Running Experiments
+## Key Files
 
-To run a simulation experiment:
+### config.py
+Contains experiment configuration:
+- Trading parameters
+- Experiment metadata
+- Default values
+- Parameter overrides
 
+### detailed_log_[timestamp].jsonl
+Contains detailed trade data:
+- Entry/exit points
+- Prices
+- Indicators
+- Signals
+
+### results_[timestamp].json
+Contains summary results:
+- Total trades
+- Win rate
+- Returns
+- Performance metrics
+
+### analysis_[timestamp].json
+Contains analysis and recommendations:
+- Trade analysis
+- Signal analysis
+- Parameter recommendations
+- Strategy improvements
+
+## Workflow Example
+
+1. Run initial experiment (v1):
 ```bash
 python src/trend_detector_backtest.py --experiment simulations/experiments/v1
 ```
 
-## Creating New Experiments
-
-1. Create a new directory under `simulations/experiments/` (e.g., `v2/`)
-2. Create a `config.py` file that inherits from `BaseConfig`
-3. Override parameters you want to test
-
-Example experiment configuration:
-
-```python
-from simulations.base_config import BaseConfig
-
-class ExperimentConfig(BaseConfig):
-    # Override parameters for this experiment
-    RSI_OVERBOUGHT = 75
-    RSI_OVERSOLD = 30
-    MACD_FAST_PERIOD = 8
-    
-    # Metadata
-    NAME = "v2_custom_strategy"
-    DESCRIPTION = "Testing modified RSI levels"
-    VERSION = "1.0"
+2. Analyze v1 results:
+```bash
+python simulations/analysis/analyze_experiment.py --experiment simulations/experiments/v1
 ```
 
-## Available Parameters
-
-### Trading Parameters
-- `SYMBOL`: Trading pair symbol (default: "TRUMPUSDC")
-- `INITIAL_USDC`: Initial USDC balance (default: 500)
-- `INITIAL_TRUMP_USDC_VALUE`: Initial TRUMP value in USDC (default: 500)
-- `MIN_TRADE_USDC`: Minimum trade size in USDC (default: 1.2)
-
-### Technical Indicators
-- `FAST_MA_PERIOD`: Fast Moving Average period (default: 10)
-- `SLOW_MA_PERIOD`: Slow Moving Average period (default: 30)
-- `RSI_PERIOD`: RSI calculation period (default: 14)
-- `RSI_OVERBOUGHT`: RSI overbought level (default: 70)
-- `RSI_OVERSOLD`: RSI oversold level (default: 35)
-- `MACD_FAST_PERIOD`: MACD fast period (default: 12)
-- `MACD_SLOW_PERIOD`: MACD slow period (default: 26)
-- `MACD_SIGNAL_PERIOD`: MACD signal period (default: 9)
-- `BOLLINGER_BAND_PERIOD`: Bollinger Bands period (default: 20)
-- `BOLLINGER_BAND_STD`: Bollinger Bands standard deviation (default: 2)
-
-### Risk Management
-- `STOP_LOSS_PERCENT`: Stop loss percentage (default: 0.02)
-- `TAKE_PROFIT_PERCENT`: Take profit percentage (default: 0.10)
-- `TRADE_RISK_PERCENT`: Risk per trade percentage (default: 0.01)
-
-### Strategy Controls
-- `MACD_CONFIRMATION`: Require MACD confirmation for signals (default: True)
-- `MIN_PRICE_CHANGE`: Minimum price change for signal (default: 1.0)
-
-## Results Analysis
-
-Experiment results are saved in JSON format in the experiment's `results/` directory. Each result file contains:
-- Trading statistics (total trades, win rate, etc.)
-- Performance metrics (total return, benchmark comparison)
-- Experiment parameters used
-- Timestamp and metadata
-
-To analyze results:
-```python
-from simulations.experiment_manager import ExperimentManager
-
-# Load experiment results
-experiment = ExperimentManager("simulations/experiments/v1")
-results = experiment.get_all_results()
-
-# Access specific result
-latest_result = results[-1]
-print(f"Win Rate: {latest_result['win_rate']}%")
-print(f"Total Return: {latest_result['total_return']}%")
+3. Generate v2 based on v1 analysis:
+```bash
+python simulations/analysis/experiment_generator.py --base-experiment simulations/experiments/v1 --name v2
 ```
 
-## Best Practices
+4. Run v2 experiment:
+```bash
+python src/trend_detector_backtest.py --experiment simulations/experiments/v2
+```
 
-1. Start with small parameter changes from the base configuration
-2. Test one parameter group at a time
-3. Document the hypothesis for each experiment in the config file
-4. Compare results against the benchmark performance
-5. Keep experiment configurations in version control 
+And so on, creating an iterative optimization process.
+
+## Notes
+
+- Each experiment preserves its configuration and results
+- Analysis is based on the most recent results in each experiment
+- New experiments can be based on any previous experiment
+- Parameters are optimized based on actual trading performance
+- The workflow supports continuous strategy improvement 
