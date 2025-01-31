@@ -55,6 +55,38 @@ Multiple confirmation requirements ensure that:
 - **Minimum Hold Time**: Reduces transaction costs and overtrading.
 - **Comprehensive Logging**: Tracks detailed parameters such as volume ratios, trend strength, and trade timing to assist in later analysis and strategy refinement.
 
+## Visual Flow Diagram
+
+Below is a visual representation of the trading logic flow using Mermaid Markdown:
+
+```mermaid
+flowchart TD
+    A[Start] --> B[Initialize Binance Client & Load Strategy Params]
+    B --> C[Fetch Initial Historical Data]
+    C --> D[Enter Main Loop]
+    D --> E[Fetch Current Price & Volume]
+    E --> F[Append new data point to price history]
+    F --> G{Sufficient Data?}
+    G -- No --> H[Collect more data & Sleep]
+    H --> D
+    G -- Yes --> I[Generate Trading Signal]
+    I --> J[Calculate Technical Indicators: MA, RSI, MACD, Volume Ratio, Trend Strength]
+    J --> K[Determine Trend (UPTREND / DOWNTREND / NEUTRAL)]
+    K --> L{Signal: BUY or SELL?}
+    L -- BUY --> M[Check Minimum Hold Time]
+    M --> N[Execute BUY: Compute qty and update balances]
+    L -- SELL --> O[Check Minimum Hold Time]
+    O --> P[Execute SELL: Compute qty and update balances]
+    N --> Q[Log Trade Activity & Update Last Trade Time]
+    P --> Q
+    Q --> R[Calculate Portfolio Performance]
+    R --> S[Log Trading Activity]
+    S --> T[Wait for next iteration]
+    T --> D
+```
+
+*This diagram illustrates the main steps in the trading bot's logic, from initializing connections and loading data to generating signals, executing trades, handling risk management, and logging for analysis.*
+
 ## Suggestions for Further Enhancements
 
 1. **Multiple Time Frame Analysis**  
