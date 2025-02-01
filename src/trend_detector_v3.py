@@ -38,8 +38,8 @@ MIN_TRADE_USDC = 1.2
 FAST_MA_PERIOD_DEFAULT = 10
 SLOW_MA_PERIOD_DEFAULT = 30
 RSI_PERIOD_DEFAULT = 14
-RSI_OVERBOUGHT_DEFAULT = 70
-RSI_OVERSOLD_DEFAULT = 32  # Optimized based on simulations
+RSI_OVERBOUGHT_DEFAULT = 65
+RSI_OVERSOLD_DEFAULT = 35  # Optimized based on simulations
 MACD_FAST_PERIOD_DEFAULT = 12
 MACD_SLOW_PERIOD_DEFAULT = 26
 MACD_SIGNAL_PERIOD_DEFAULT = 9
@@ -50,11 +50,11 @@ TAKE_PROFIT_PERCENT_DEFAULT = 0.10
 TRADE_RISK_PERCENT_DEFAULT = 0.01
 
 # New parameters based on simulation improvements
-MIN_HOLD_TIME_MINUTES_DEFAULT = 5  # Minimum hold time to avoid quick reversals
-MIN_PRICE_CHANGE_DEFAULT = 1.2  # Balanced value between v2 (1.5) and v3 (1.0)
+MIN_HOLD_TIME_MINUTES_DEFAULT = 1  # Minimum hold time to avoid quick reversals
+MIN_PRICE_CHANGE_DEFAULT = 0.5  # Balanced value between v2 (1.5) and v3 (1.0)
 MACD_CONFIRMATION_DEFAULT = True
-VOLUME_THRESHOLD_DEFAULT = 1.5  # Minimum volume multiplier compared to average
-TREND_STRENGTH_THRESHOLD_DEFAULT = 0.6  # Required strength for trend confirmation
+VOLUME_THRESHOLD_DEFAULT = 1.1  # Minimum volume multiplier compared to average
+TREND_STRENGTH_THRESHOLD_DEFAULT = 0.3  # Required strength for trend confirmation
 
 # --- Global Variables ---
 client = None
@@ -232,13 +232,18 @@ def initialize_client():
         print(f"Failed to initialize Binance client: {e}")
         return False
 
-def fetch_current_price(symbol):
-    """Fetch current price for the given symbol."""
+def fetch_current_price_and_volume(symbol):
+    """Fetch current price and 24h volume for the given symbol."""
     try:
-        ticker = client.get_symbol_ticker(symbol=symbol)
-        return float(ticker['price'])
+        ticker_24h = client.get_ticker(symbol=symbol)
+        return {
+            'price': float(ticker_24h['lastPrice']),
+            'volume': float(ticker_24h['volume']),
+            'quote_volume': float(ticker_24h['quoteVolume']),  # Volume in USDC
+            'trades': int(ticker_24h['count'])  # Number of trades
+        }
     except Exception as e:
-        print(f"Error fetching price: {e}")
+        print(f"Error fetching price and volume: {e}")
         return None
 
 def calculate_rsi_pandas(prices, period=14):
@@ -445,6 +450,29 @@ def log_data(log_file, log_message):
     except Exception as e:
         print(f"Error in log_data: {e}")
 
+def calculate_trade_statistics():
+    """Calculate statistics for all trades."""
+    buy_trades = [t for t in trade_history if t['action'] == 'BUY']
+    sell_trades = [t for t in trade_history if t['action'] == 'SELL']
+    
+    total_buy_volume = sum(t.get('quantity', 0) for t in buy_trades)
+    total_buy_value = sum(t.get('quantity', 0) * t.get('price', 0) for t in buy_trades)
+    
+    total_sell_volume = sum(t.get('quantity', 0) for t in sell_trades)
+    total_sell_value = sum(t.get('quantity', 0) * t.get('price', 0) for t in sell_trades)
+    
+    total_profit = sum(t.get('profit', 0) for t in sell_trades)
+    
+    return {
+        'buy_count': len(buy_trades),
+        'sell_count': len(sell_trades),
+        'buy_volume': total_buy_volume,
+        'sell_volume': total_sell_volume,
+        'buy_value': total_buy_value,
+        'sell_value': total_sell_value,
+        'total_profit': total_profit
+    }
+
 def main():
     global initial_trump_qty, current_strategy_params, historical_performance
     global trading_enabled, trade_history, last_performance_iteration
@@ -465,25 +493,27 @@ def main():
     os.makedirs(MODEL_DIR, exist_ok=True)
     
     # Calculate initial TRUMP quantity based on current price
-    current_price = fetch_current_price(SYMBOL)
-    if current_price:
-        initial_trump_qty = INITIAL_TRUMP_USDC_VALUE / current_price
+    market_data = fetch_current_price_and_volume(SYMBOL)
+    if market_data:
+        current_price = market_data['price']
+        initial_trump_qty = INITIAL_TRUMP_USDC_VALUE / current_price  # Buy 500 USDC worth of TRUMP
         print(f"Initial TRUMP quantity calculated: {initial_trump_qty:.6f} at price {current_price}")
     else:
         print("Failed to fetch initial price. Using 0 as initial TRUMP quantity.")
         initial_trump_qty = 0
+        current_price = 0
     
     # Initialize trading variables
-    usdc_balance = INITIAL_USDC
-    trump_balance = initial_trump_qty
-    initial_portfolio_value = INITIAL_USDC + (initial_trump_qty * current_price if current_price else 0)
+    usdc_balance = INITIAL_USDC  # Start with 500 USDC
+    trump_balance = initial_trump_qty  # Start with 500 USDC worth of TRUMP
+    initial_portfolio_value = INITIAL_USDC + INITIAL_TRUMP_USDC_VALUE  # Total 1000 USDC
     last_trade_time = 0
     iteration = 0
     
     print("\nStarting improved trading strategy v3...")
-    print(f"Initial USDC balance: {usdc_balance}")
-    print(f"Initial TRUMP balance: {trump_balance}")
-    print(f"Initial portfolio value: {initial_portfolio_value}")
+    print(f"Initial USDC balance: {usdc_balance:.2f}")
+    print(f"Initial TRUMP balance: {trump_balance:.6f} (${INITIAL_TRUMP_USDC_VALUE:.2f} USDC)")
+    print(f"Initial portfolio value: {initial_portfolio_value:.2f} USDC")
     
     # Fetch initial historical data
     required_points = max(
@@ -507,22 +537,21 @@ def main():
             iteration += 1
             print(f"\nIteration {iteration} - {time.strftime('%Y-%m-%d %H:%M:%S')}")
             
-            current_price = fetch_current_price(SYMBOL)
-            if current_price is None:
-                print("Failed to fetch price, retrying in 10 seconds...")
+            # Fetch current market data
+            market_data = fetch_current_price_and_volume(SYMBOL)
+            if market_data is None:
+                print("Failed to fetch market data, retrying in 10 seconds...")
                 time.sleep(10)
                 continue
             
-            print(f"Current {SYMBOL} price: {current_price}")
+            current_price = market_data['price']
+            volume = market_data['volume']
+            quote_volume = market_data['quote_volume']
+            num_trades = market_data['trades']
             
-            # Update price history with volume
-            try:
-                ticker = client.get_symbol_ticker(symbol=SYMBOL)
-                volume = float(ticker.get('volume', 0))
-                print(f"24h Volume: {volume}")
-            except Exception as e:
-                print(f"Error fetching volume: {e}")
-                volume = 0
+            print(f"Current {SYMBOL} price: {current_price:.2f}")
+            print(f"24h Volume: {volume:.2f} TRUMP (${quote_volume:.2f} USDC)")
+            print(f"24h Number of trades: {num_trades}")
             
             current_time = time.strftime("%Y-%m-%d %H:%M:%S")
             new_row = pd.DataFrame([{
@@ -574,7 +603,8 @@ def main():
                 current_portfolio_value = usdc_balance + (trump_balance * current_price)
                 performance_percent = evaluate_performance(initial_portfolio_value, current_portfolio_value)
                 
-                print(f"Current portfolio value: {current_portfolio_value:.2f} USDC (P/L: {performance_percent:.2f}%)")
+                print(f"Portfolio: {usdc_balance:.2f} USDC + {trump_balance:.6f} TRUMP (${(trump_balance * current_price):.2f})")
+                print(f"Total value: {current_portfolio_value:.2f} USDC (P/L: {performance_percent:.2f}%)")
                 
                 log_message = prepare_log_message(
                     current_time, iteration, current_price, trade_signal, trend,
@@ -586,7 +616,14 @@ def main():
             else:
                 print(f"Collecting price history... ({len(prices_history)}/{current_strategy_params['SLOW_MA_PERIOD']} data points)")
             
-            print(f"Waiting {10} seconds before next iteration...")
+            # After portfolio value display, add trade statistics
+            stats = calculate_trade_statistics()
+            print("\nTrade History:")
+            print(f"Buy orders:  {stats['buy_count']} trades, {stats['buy_volume']:.6f} TRUMP (${stats['buy_value']:.2f})")
+            print(f"Sell orders: {stats['sell_count']} trades, {stats['sell_volume']:.6f} TRUMP (${stats['sell_value']:.2f})")
+            print(f"Realized P/L: ${stats['total_profit']:.2f}")
+            
+            print(f"\nWaiting {10} seconds before next iteration...")
             time.sleep(10)
             
         except Exception as e:
